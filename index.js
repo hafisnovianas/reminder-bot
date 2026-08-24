@@ -13,82 +13,35 @@ let db;   // Variabel global untuk koneksi database SQLite
 // Map memori sementara untuk melacak alur tanya-jawab user
 const userSessions = new Map();
 
-// ========================================================
-// FUNGSI PENERJEMAH WAKTU PINTAR (SMART TIME PARSER)
-// ========================================================
-function parseSmartTime(text) {
-    const now = new Date();
-    text = text.toLowerCase().trim();
+// Penerjemah waktu pintar (lihat lib/parse-time.js, diuji di test/parser.test.js)
+const { parseSmartTime } = require('./lib/parse-time');
 
-    // 1. Durasi (Hitung Mundur): X menit / mnt
-    let match = text.match(/^(\d+)\s*(menit|mnt)$/);
-    if (match) return new Date(now.getTime() + parseInt(match[1]) * 60000);
+// Format tanggal panjang untuk pesan konfirmasi
+function formatWaktuLengkap(date) {
+    return date.toLocaleString('id-ID', {
+        weekday: 'long', year: 'numeric', month: 'long',
+        day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+}
 
-    // 2. Durasi: X jam
-    match = text.match(/^(\d+)\s*jam$/);
-    if (match) return new Date(now.getTime() + parseInt(match[1]) * 3600000);
+// Format ringkas untuk daftar pilihan jam ambigu: "07:00, Senin 24 Agustus"
+function formatWaktuRingkas(date) {
+    const jam = date.toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const hari = date.toLocaleString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
+    return `${jam}, ${hari}`;
+}
 
-    // 3. Durasi: X hari
-    match = text.match(/^(\d+)\s*hari$/);
-    if (match) return new Date(now.getTime() + parseInt(match[1]) * 86400000);
+// Setelah waktu final ditentukan, lanjut ke pertanyaan pengulangan.
+// Dipakai baik dari alur normal maupun setelah user memilih jam yang ambigu.
+async function lanjutKeTahapPengulangan(pengirim, session, targetDate) {
+    session.waktuEksekusi = targetDate.getTime();
+    session.konfirmasiWaktu = formatWaktuLengkap(targetDate);
+    session.step = 'WAITING_RECURRENCE';
+    delete session.pilihanWaktu;
 
-    // Fungsi internal (Helper) untuk membaca format jam kasual
-    function parseTimeOnly(timeStr) {
-        let hours = 0, minutes = 0;
-        // Cek pola kasual: "8 malam", "2 siang", "10 pagi"
-        const casualMatch = timeStr.match(/^(\d+)(?:\s*(pagi|siang|sore|malam|malem))?$/);
-        if (casualMatch) {
-            hours = parseInt(casualMatch[1]);
-            const period = casualMatch[2];
-            if (period === 'siang' || period === 'sore' || period === 'malam' || period === 'malem') {
-                if (hours < 12) hours += 12; // Ubah jam 2 siang jadi 14
-            } else if (period === 'pagi' && hours === 12) {
-                hours = 0;
-            }
-        } else {
-            // Cek pola kaku harian: "14:30" atau "14.30"
-            const exactMatch = timeStr.match(/^(\d{1,2})[:.](\d{2})$/);
-            if (exactMatch) {
-                hours = parseInt(exactMatch[1]);
-                minutes = parseInt(exactMatch[2]);
-            } else return null;
-        }
-        return { hours, minutes };
-    }
-
-    // 4. Keterangan hari: besok / lusa [waktu]
-    match = text.match(/^(besok|lusa)(?:\s+jam)?\s+(.+)$/);
-    if (match) {
-        const dayOffset = match[1] === 'besok' ? 1 : 2;
-        const timeObj = parseTimeOnly(match[2]);
-        if (timeObj) {
-            const d = new Date(now);
-            d.setDate(d.getDate() + dayOffset);
-            d.setHours(timeObj.hours, timeObj.minutes, 0, 0);
-            return d;
-        }
-    }
-
-    // 5. Waktu hari ini (nanti jam 8 malam, jam 14:00, 2 sore)
-    match = text.match(/^(?:nanti\s+)?(?:jam\s+)?(.+)$/);
-    if (match) {
-        const timeObj = parseTimeOnly(match[1]);
-        if (timeObj) {
-            const d = new Date(now);
-            d.setHours(timeObj.hours, timeObj.minutes, 0, 0);
-            // Pintar: Jika waktu sudah lewat hari ini, otomatis jadwalkan untuk besok
-            if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
-            return d;
-        }
-    }
-
-    // 6. Pola spesifik original (DD/MM/YYYY HH:mm)
-    match = text.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
-    if (match) {
-        return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]), parseInt(match[4]), parseInt(match[5]), 0, 0);
-    }
-
-    return null; // Gagal mengenali format
+    await sock.sendMessage(pengirim, {
+        text: `🗓️ Jadwal pertama diatur pada: *${session.konfirmasiWaktu}*\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n\n_(Ketik *b* untuk membatalkan)_`
+    });
 }
 
 // ========================================================
@@ -273,43 +226,75 @@ async function connectToWhatsApp() {
                 else if (session.step === 'WAITING_TIME') {
                     if (lowerText === 'panduan' || lowerText === 'p') {
                         await sock.sendMessage(pengirim, { 
-                            text: `💡 *Panduan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat jadwal baru\n• *j* (atau *jadwal*) : Lihat daftar jadwal\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Batal membuat jadwal\n• *p* (atau *panduan*) : Buka menu bantuan\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*\n• Hari ini: *14:30*, *2 siang*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *lusa 3 sore*\n• Spesifik (Tgl/Bln/Thn Jam:Menit): *25/08/2026 09:00*\n\nSilakan balas waktu untuk *" ${session.pesan} "* sekarang.\n_(Atau ketik *b* untuk batal)_` 
+                            text: `💡 *Panduan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat jadwal baru\n• *j* (atau *jadwal*) : Lihat daftar jadwal\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Batal membuat jadwal\n• *p* (atau *panduan*) : Buka menu bantuan\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn Jam:Menit): *25/08/2026 09:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\nSilakan balas waktu untuk *" ${session.pesan} "* sekarang.\n_(Atau ketik *b* untuk batal)_` 
                         });
                         return; // Jangan hapus sesi, biarkan user balas lagi
                     }
 
-                    const targetDate = parseSmartTime(userText);
+                    const hasilWaktu = parseSmartTime(userText);
 
-                    if (!targetDate) {
-                        await sock.sendMessage(pengirim, { 
-                            text: `❌ *Format waktu tidak dikenali!*\n\nKetik *p* (atau *panduan*) untuk melihat contoh pengetikan yang benar, atau ketik *b* (atau *batal*) untuk membatalkan.` 
+                    if (!hasilWaktu) {
+                        await sock.sendMessage(pengirim, {
+                            text: `❌ *Format waktu tidak dikenali!*\n\nKetik *p* (atau *panduan*) untuk melihat contoh pengetikan yang benar, atau ketik *b* (atau *batal*) untuk membatalkan.`
                         });
-                        return; 
+                        return;
                     }
 
-                    const waktuEksekusi = targetDate.getTime();
+                    // Jam polos seperti "jam 7" bisa berarti pagi atau malam.
+                    // Tanyakan dulu daripada menebak diam-diam.
+                    if (hasilWaktu.type === 'ambiguous') {
+                        session.pilihanWaktu = hasilWaktu.candidates.map(d => d.getTime());
+                        session.step = 'WAITING_TIME_CLARIFY';
 
-                    if (waktuEksekusi <= waktuSekarang) {
+                        const daftar = hasilWaktu.candidates
+                            .map((d, i) => `*${i + 1}* = ${formatWaktuRingkas(d)}`)
+                            .join('\n');
+
+                        await sock.sendMessage(pengirim, {
+                            text: `🕐 *"${userText}"* bisa berarti dua waktu. Maksud Anda yang mana?\n\n${daftar}\n\n_(Balas dengan angkanya. Lain kali bisa langsung tulis *jam 7 pagi* atau *19:00* agar tidak ditanya lagi.)_\n❌ Ketik *b* untuk batal.`
+                        });
+                        return;
+                    }
+
+                    const targetDate = hasilWaktu.date;
+
+                    if (targetDate.getTime() <= waktuSekarang) {
                         await sock.sendMessage(pengirim, { text: `❌ *Waktu sudah berlalu!* Masukkan waktu di masa depan.\n_(Atau ketik *b* untuk batal)_` });
                         return;
                     }
 
-                    const konfirmasiWaktu = targetDate.toLocaleString('id-ID', { 
-                        weekday: 'long', year: 'numeric', month: 'long', 
-                        day: 'numeric', hour: '2-digit', minute: '2-digit' 
-                    });
-
                     // Pindah ke tahap 3: Pengulangan
-                    session.waktuEksekusi = waktuEksekusi;
-                    session.konfirmasiWaktu = konfirmasiWaktu;
-                    session.step = 'WAITING_RECURRENCE';
-
-                    await sock.sendMessage(pengirim, { 
-                        text: `🗓️ Jadwal pertama diatur pada: *${konfirmasiWaktu}*\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n\n_(Ketik *b* untuk membatalkan)_` 
-                    });
+                    await lanjutKeTahapPengulangan(pengirim, session, targetDate);
                     return;
                 }
-                
+
+                // TAHAP 2b: User memilih salah satu tafsiran jam yang ambigu
+                else if (session.step === 'WAITING_TIME_CLARIFY') {
+                    const pilihan = parseInt(userText, 10);
+                    const kandidat = session.pilihanWaktu || [];
+
+                    if (isNaN(pilihan) || pilihan < 1 || pilihan > kandidat.length) {
+                        const daftar = kandidat
+                            .map((ts, i) => `*${i + 1}* = ${formatWaktuRingkas(new Date(ts))}`)
+                            .join('\n');
+
+                        await sock.sendMessage(pengirim, {
+                            text: `❌ Balas dengan angka pilihannya saja.\n\n${daftar}\n\n_(Atau ketik *b* untuk batal)_`
+                        });
+                        return;
+                    }
+
+                    const terpilih = new Date(kandidat[pilihan - 1]);
+
+                    if (terpilih.getTime() <= waktuSekarang) {
+                        await sock.sendMessage(pengirim, { text: `❌ *Waktu sudah berlalu!* Masukkan waktu di masa depan.\n_(Atau ketik *b* untuk batal)_` });
+                        return;
+                    }
+
+                    await lanjutKeTahapPengulangan(pengirim, session, terpilih);
+                    return;
+                }
+
                 // TAHAP 3: Bot menunggu input Pengulangan (Recurrence)
                 else if (session.step === 'WAITING_RECURRENCE') {
                     let tipePengulangan = 'sekali';
@@ -485,7 +470,7 @@ async function connectToWhatsApp() {
             }
             else if (lowerText === 'panduan' || lowerText === 'p' || lowerText === '!help' || lowerText === 'halo' || lowerText === 'ping' || lowerText === '?') {
                 await sock.sendMessage(pengirim, { 
-                    text: `💡 *Pusat Bantuan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat pengingat baru\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *2 siang*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok 3 sore*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*\n\n_Ketik *i* (atau *ingatkan*) untuk mulai membuat jadwal._` 
+                    text: `💡 *Pusat Bantuan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat pengingat baru\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\n_Ketik *i* (atau *ingatkan*) untuk mulai membuat jadwal._` 
                 });
             }
         } catch (error) {
