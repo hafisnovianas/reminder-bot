@@ -40,7 +40,7 @@ async function lanjutKeTahapPengulangan(pengirim, session, targetDate) {
     delete session.pilihanWaktu;
 
     await sock.sendMessage(pengirim, {
-        text: `🗓️ Jadwal pertama diatur pada: *${session.konfirmasiWaktu}*\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n\n_(Ketik *b* untuk membatalkan)_`
+        text: `🗓️ Jadwal pertama diatur pada: *${session.konfirmasiWaktu}*\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n*4* = Ya, Setiap Bulan (Di tanggal yang sama)\n*5* = Ya, Setiap Tahun (Di tanggal dan bulan yang sama)\n\n_(Ketik *b* untuk membatalkan)_`
     });
 }
 
@@ -308,8 +308,14 @@ async function connectToWhatsApp() {
                     } else if (userText === '3') {
                         tipePengulangan = 'mingguan';
                         labelPengulangan = '🔄 Setiap Minggu';
+                    } else if (userText === '4') {
+                        tipePengulangan = 'bulanan';
+                        labelPengulangan = '🔄 Setiap Bulan';
+                    } else if (userText === '5') {
+                        tipePengulangan = 'tahunan';
+                        labelPengulangan = '🔄 Setiap Tahun';
                     } else {
-                        await sock.sendMessage(pengirim, { text: `❌ Pilihan tidak valid. Silakan balas dengan angka *1, 2, atau 3*.\n_(Atau ketik *b* untuk batal)_` });
+                        await sock.sendMessage(pengirim, { text: `❌ Pilihan tidak valid. Silakan balas dengan angka *1, 2, 3, 4, atau 5*.\n_(Atau ketik *b* untuk batal)_` });
                         return;
                     }
 
@@ -388,6 +394,8 @@ async function connectToWhatsApp() {
                         let labelUlang = '';
                         if (jadwal.tipe_pengulangan === 'harian') labelUlang = ' (🔄 Tiap Hari)';
                         if (jadwal.tipe_pengulangan === 'mingguan') labelUlang = ' (🔄 Tiap Minggu)';
+                        if (jadwal.tipe_pengulangan === 'bulanan') labelUlang = ' (🔄 Tiap Bulan)';
+                        if (jadwal.tipe_pengulangan === 'tahunan') labelUlang = ' (🔄 Tiap Tahun)';
                         
                         teksJadwal += `${index + 1}. *${jadwal.pesan}*${labelUlang}\n   🗓️ ${waktu}\n\n`;
                     });
@@ -434,6 +442,8 @@ async function connectToWhatsApp() {
                         let labelUlang = '';
                         if (jadwal.tipe_pengulangan === 'harian') labelUlang = ' (🔄 Tiap Hari)';
                         if (jadwal.tipe_pengulangan === 'mingguan') labelUlang = ' (🔄 Tiap Minggu)';
+                        if (jadwal.tipe_pengulangan === 'bulanan') labelUlang = ' (🔄 Tiap Bulan)';
+                        if (jadwal.tipe_pengulangan === 'tahunan') labelUlang = ' (🔄 Tiap Tahun)';
 
                         teksJadwal += `${index + 1}. *${jadwal.pesan}*${labelUlang}\n   🗓️ ${waktu}\n\n`;
                     });
@@ -520,6 +530,18 @@ cron.schedule('* * * * *', async () => {
                     const nextTime = reminder.waktu_eksekusi + 604800000;
                     await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
                     console.log(`🔁 Pengingat mingguan dijadwalkan ulang untuk minggu depan.`);
+                } else if (reminder.tipe_pengulangan === 'bulanan') {
+                    const dateObj = new Date(reminder.waktu_eksekusi);
+                    dateObj.setMonth(dateObj.getMonth() + 1);
+                    const nextTime = dateObj.getTime();
+                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
+                    console.log(`🔁 Pengingat bulanan dijadwalkan ulang untuk bulan depan.`);
+                } else if (reminder.tipe_pengulangan === 'tahunan') {
+                    const dateObj = new Date(reminder.waktu_eksekusi);
+                    dateObj.setFullYear(dateObj.getFullYear() + 1);
+                    const nextTime = dateObj.getTime();
+                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
+                    console.log(`🔁 Pengingat tahunan dijadwalkan ulang untuk tahun depan.`);
                 } else {
                     // Jika 'sekali', tandai sent agar tidak terkirim lagi
                     await db.run(`UPDATE reminders SET status = 'sent' WHERE id = ?`, [reminder.id]);
