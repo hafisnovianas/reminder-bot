@@ -13,6 +13,19 @@ let db;   // Variabel global untuk koneksi database SQLite
 // Map memori sementara untuk melacak alur tanya-jawab user
 const userSessions = new Map();
 
+// Map untuk rate limiting (Anti-Spam)
+const rateLimitMap = new Map();
+const SPAM_THRESHOLD = 7; // Maksimal pesan
+const SPAM_WINDOW_MS = 10000; // Dalam waktu 10 detik (10.000 ms)
+
+// Penanganan error global agar bot tidak mati (Down)
+process.on('uncaughtException', (err) => {
+    console.error('💥 [CRITICAL] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 [CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // Penerjemah waktu pintar (lihat lib/parse-time.js, diuji di test/parser.test.js)
 const { parseSmartTime } = require('./lib/parse-time');
 
@@ -148,6 +161,31 @@ async function connectToWhatsApp() {
 
         const waktuSekarang = new Date().getTime();
 
+        // ==========================================
+        // 🛡️ FITUR ANTI-SPAM (RATE LIMITING)
+        // ==========================================
+        if (!rateLimitMap.has(pengirim)) {
+            rateLimitMap.set(pengirim, { count: 1, firstMessageTime: waktuSekarang, warned: false });
+        } else {
+            const userSpamData = rateLimitMap.get(pengirim);
+            if (waktuSekarang - userSpamData.firstMessageTime < SPAM_WINDOW_MS) {
+                userSpamData.count += 1;
+                if (userSpamData.count > SPAM_THRESHOLD) {
+                    if (!userSpamData.warned) {
+                        userSpamData.warned = true;
+                        try {
+                            await sock.sendMessage(pengirim, { text: `⚠️ *Sistem Anti-Spam Aktif*\nAnda mengirim terlalu banyak pesan dalam waktu singkat. Bot akan mengabaikan pesan Anda sementara. Harap tunggu beberapa saat.` });
+                        } catch (e) { console.log('Gagal mengirim peringatan spam'); }
+                    }
+                    return; // Hentikan eksekusi, abaikan pesan user ini
+                }
+            } else {
+                // Reset karena sudah lewat window time
+                rateLimitMap.set(pengirim, { count: 1, firstMessageTime: waktuSekarang, warned: false });
+            }
+        }
+        // ==========================================
+
         try {
             // 1. Cek apakah user sudah terdaftar di tabel users
             const user = await db.get(`SELECT * FROM users WHERE nomor_wa = ?`, [pengirim]);
@@ -213,6 +251,12 @@ async function connectToWhatsApp() {
             if (session) {
                 // TAHAP 1: Bot sedang menunggu input Pesan
                 if (session.step === 'WAITING_MESSAGE') {
+                    // Batasi panjang pesan maksimal 300 karakter untuk mencegah database bloat
+                    if (userText.length > 300) {
+                        await sock.sendMessage(pengirim, { text: `⚠️ *Pesan Terlalu Panjang!*\nMaksimal pesan adalah 300 karakter. Pesan Anda mengandung ${userText.length} karakter.\n\nSilakan ketik ulang pesannya dengan lebih singkat. _(Ketik *b* untuk batal)_` });
+                        return;
+                    }
+
                     session.pesan = userText;          
                     session.step = 'WAITING_TIME';     
                     
@@ -349,6 +393,11 @@ async function connectToWhatsApp() {
 
                 // TAHAP MENUNGGU INPUT SARAN/LAPORAN
                 else if (session.step === 'WAITING_FEEDBACK') {
+                    if (userText.length > 500) {
+                        await sock.sendMessage(pengirim, { text: `⚠️ *Masukan Terlalu Panjang!*\nMaksimal masukan adalah 500 karakter. Silakan ketik ulang masukan Anda dengan lebih ringkas. _(Ketik *b* untuk batal)_` });
+                        return;
+                    }
+
                     // Simpan ke SQLite tabel feedbacks
                     await db.run(
                         `INSERT INTO feedbacks (nomor_wa, nama, pesan, created_at) VALUES (?, ?, ?, ?)`,
@@ -367,6 +416,13 @@ async function connectToWhatsApp() {
 
             // 3. JIKA TIDAK ADA ALUR AKTIF (MULAI BARU)
             if (lowerText === 'ingatkan' || lowerText === 'i') {
+                // Cek jumlah jadwal aktif (pending), batasi maksimal 50 agar tidak membebani sistem
+                const checkCount = await db.get(`SELECT COUNT(id) as count FROM reminders WHERE nomor_wa = ? AND status = 'pending'`, [pengirim]);
+                if (checkCount && checkCount.count >= 50) {
+                    await sock.sendMessage(pengirim, { text: `⚠️ *Batas Maksimal Pengingat Tercapai!*\nAnda sudah memiliki 50 jadwal aktif. Silakan hapus beberapa jadwal yang sudah tidak relevan dengan mengetik *j* lalu *h [nomor]* sebelum membuat yang baru.` });
+                    return;
+                }
+
                 userSessions.set(pengirim, { step: 'WAITING_MESSAGE' });
                 await sock.sendMessage(pengirim, { 
                     text: `Halo Kak ${namaPengirim}, apa pesan pengingatnya?\n\n_(Balas dengan inti pesannya saja, contoh: "Bayar tagihan listrik". Ketik *b* untuk batal)_` 
