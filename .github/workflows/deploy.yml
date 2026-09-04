@@ -32,4 +32,4 @@ jobs:
           script: |
             cd ${{ secrets.TARGET_DIR }}
             npm ci --omit=dev
-            pm2 restart reminder-bot
+            pm2 start index.js --name reminder-bot || pm2 restart reminder-bot
