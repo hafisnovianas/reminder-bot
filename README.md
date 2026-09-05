@@ -73,6 +73,7 @@ Hanya dikenali bila dikirim dari nomor `ADMIN_WA`:
 ```
 index.js              alur utama: koneksi WA, penanganan pesan, cron
 lib/config.js         semua konfigurasi, dibaca dari environment
+lib/quiet-libsignal.js  cegah libsignal mencetak kunci sesi ke log
 lib/parse-time.js     penerjemah waktu bahasa sehari-hari -> Date
 lib/recurrence.js     perhitungan jadwal berikutnya untuk pengingat berulang
 lib/auto-backup.js    backup database harian ke WhatsApp admin
@@ -163,9 +164,15 @@ Hal-hal berikut belum tertangani dan disebutkan di sini supaya tidak terlupa:
 - **Risiko blokir nomor.** Mengirim pesan otomatis lewat client tidak resmi
   selalu berisiko. Jeda pengiriman dan alur "simpan kontak dulu" mengurangi,
   bukan menghilangkan.
-- **Material kunci sesi tercetak ke stdout.** Ada dependensi yang mencetak
-  objek sesi libsignal ke log pm2. Sumbernya belum teridentifikasi; sudah
-  dicari di kode proyek, `libsignal` (nol `console.log`), dan `baileys/lib`.
-  Mitigasi sementara: log rotation dan `chmod 600` pada `~/.pm2/logs/`.
+- **Penambalan `console` global.** `libsignal` mencetak seluruh objek
+  `SessionEntry` — termasuk `privKey` dan `rootKey` — ke konsol pada empat
+  tempat di `src/session_record.js`. Pemanggilannya memakai `console` global
+  dan tidak bisa dimatikan lewat konfigurasi, sedangkan menyunting
+  `node_modules` hilang setiap `npm ci`. Karena itu
+  [`lib/quiet-libsignal.js`](lib/quiet-libsignal.js) menambal `console.info`
+  dan `console.warn` saat startup untuk membuang lampiran objeknya. Kalau
+  suatu saat `libsignal` mengubah teks pesannya, saringan ini berhenti bekerja
+  tanpa pemberitahuan dan kunci akan tercetak lagi — daftar prefiksnya perlu
+  diperiksa ulang setiap kali dependensi itu naik versi.
 - **Satu proses, satu instance.** Tidak ada mekanisme kalau nanti perlu
   dijalankan ganda; SQLite dan sesi WA sama-sama mengasumsikan pemilik tunggal.
