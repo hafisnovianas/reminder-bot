@@ -2,6 +2,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
+const { mulaiAutoBackup } = require('./lib/auto-backup');
 
 // Modul SQLite
 const sqlite3 = require('sqlite3');
@@ -144,6 +145,7 @@ async function connectToWhatsApp() {
             }
         } else if (connection === 'open') {
             console.log('✅ WhatsApp Berhasil Terhubung! Bot Reminder Siap!');
+            mulaiAutoBackup(sock);
         }
     });
 
