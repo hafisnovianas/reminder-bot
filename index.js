@@ -14,16 +14,34 @@ const { mulaiAutoBackup } = require('./lib/auto-backup');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 
+// Semua ambang & nomor admin kini datang dari environment (lihat lib/config.js)
+const {
+    SPAM_THRESHOLD,
+    SPAM_WINDOW_MS,
+    MAX_REMINDER_PER_USER,
+    MAX_KIRIM_PER_PUTARAN,
+    JEDA_KIRIM_MS,
+    SESI_KEDALUWARSA_MS
+} = require('./lib/config');
+
 let sock; // Variabel global untuk socket WA
 let db;   // Variabel global untuk koneksi database SQLite
+
+// Penjaga agar tidak ada dua proses penyambungan berjalan bersamaan.
+// Event 'close' bisa muncul berkali-kali untuk satu kegagalan yang sama;
+// tanpa penjaga ini setiap event menjadwalkan connectToWhatsApp() sendiri,
+// socket lama tidak pernah dibersihkan, dan satu pesan user berakhir diproses
+// oleh beberapa listener sekaligus (balasan dobel, jadwal tersimpan dobel).
+let sedangMenghubungkan = false;
+let percobaanUlang = 0;
 
 // Map memori sementara untuk melacak alur tanya-jawab user
 const userSessions = new Map();
 
 // Map untuk rate limiting (Anti-Spam)
 const rateLimitMap = new Map();
-const SPAM_THRESHOLD = 7; // Maksimal pesan
-const SPAM_WINDOW_MS = 10000; // Dalam waktu 10 detik (10.000 ms)
+
+const tidur = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Penanganan error global agar bot tidak mati (Down)
 process.on('uncaughtException', (err) => {
@@ -35,6 +53,9 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Penerjemah waktu pintar (lihat lib/parse-time.js, diuji di test/parser.test.js)
 const { parseSmartTime } = require('./lib/parse-time');
+
+// Penjadwalan ulang pengingat berulang (diuji di test/recurrence.test.js)
+const { hitungJadwalBerikutnya } = require('./lib/recurrence');
 
 // Format tanggal panjang untuk pesan konfirmasi
 function formatWaktuLengkap(date) {
@@ -115,10 +136,53 @@ async function initDatabase() {
     console.log('📦 Database SQLite siap dan tabel telah diperiksa.');
 }
 
+/** Jadwalkan sambung ulang dengan jeda yang makin panjang (maks 60 detik). */
+function jadwalkanSambungUlang() {
+    const jeda = Math.min(60000, 2000 * Math.pow(2, percobaanUlang));
+    percobaanUlang += 1;
+    console.log(`🔄 Menghubungkan ulang dalam ${Math.round(jeda / 1000)} detik (percobaan ke-${percobaanUlang})...`);
+    setTimeout(connectToWhatsApp, jeda);
+}
+
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_wa');
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    console.log(`📱 Menggunakan WA v${version.join('.')}, isLatest: ${isLatest}`);
+    if (sedangMenghubungkan) return;
+    sedangMenghubungkan = true;
+
+    // Putuskan socket lama sebelum membuat yang baru, supaya listener-nya tidak
+    // ikut hidup dan memproses pesan yang sama untuk kedua kalinya.
+    if (sock) {
+        const socketLama = sock;
+        sock = null;
+        try {
+            // Urutannya penting: lepas listener DULU. sock.end() memicu event
+            // 'connection.update' bertipe close, dan kalau handler-nya masih
+            // terpasang, dia akan menjadwalkan sambung ulang untuk kedua kalinya.
+            socketLama.ev.removeAllListeners();
+            // end() mengembalikan Promise; tanpa .catch penolakannya lolos dari
+            // try/catch ini dan mendarat di handler unhandledRejection.
+            Promise.resolve(socketLama.end(undefined)).catch(() => {});
+        } catch (e) {
+            // Socket lama memang sudah mati, tidak masalah.
+        }
+    }
+
+    let state;
+    let saveCreds;
+    let version;
+    try {
+        ({ state, saveCreds } = await useMultiFileAuthState('auth_wa'));
+        const info = await fetchLatestBaileysVersion();
+        version = info.version;
+        console.log(`📱 Menggunakan WA v${info.version.join('.')}, isLatest: ${info.isLatest}`);
+    } catch (e) {
+        // Gagal sebelum socket sempat dibuat (mis. jaringan mati saat ambil
+        // versi). Tanpa ini flag sedangMenghubungkan tersangkut selamanya dan
+        // bot tidak pernah mencoba menyambung lagi.
+        console.error('❌ Gagal menyiapkan koneksi:', e?.message || e);
+        sedangMenghubungkan = false;
+        jadwalkanSambungUlang();
+        return;
+    }
 
     sock = makeWASocket({
         version,
@@ -140,28 +204,49 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             const reason = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = reason !== DisconnectReason.loggedOut;
-            
+
             console.log(`❌ Koneksi terputus. Kode Status: ${reason}`);
-            
+
+            // Lepas penjaga DULU, baru jadwalkan. Kalau tidak, percobaan
+            // berikutnya akan langsung ditolak oleh guard di awal fungsi.
+            sedangMenghubungkan = false;
+
             if (shouldReconnect) {
-                console.log('🔄 Menghubungkan ulang...');
-                setTimeout(connectToWhatsApp, 2000); 
+                jadwalkanSambungUlang();
             } else {
                 console.log('🛑 Sesi Logout. Folder auth_wa sudah tidak valid, silakan hapus folder tersebut dan restart server.');
             }
         } else if (connection === 'open') {
             console.log('✅ WhatsApp Berhasil Terhubung! Bot Reminder Siap!');
+            sedangMenghubungkan = false;
+            percobaanUlang = 0; // koneksi sehat, reset jeda backoff
             mulaiAutoBackup(sock);
         }
     });
 
     sock.ev.on('messages.upsert', async (m) => {
+        // Hanya pesan yang benar-benar baru. Saat reconnect, Baileys mengirim
+        // ulang riwayat lama dengan type 'append' — tanpa cek ini bot membalas
+        // chat basi dan bisa membuat ulang jadwal yang sudah lama selesai.
+        if (m.type !== 'notify') return;
+
         const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        if (!msg?.message || msg.key.fromMe) return;
+
+        const asalChat = msg.key.remoteJid || '';
+
+        // Bot ini dirancang untuk percakapan pribadi satu lawan satu.
+        // Tanpa filter ini bot ikut menyahut di grup dan mengirim kartu kontak
+        // ke sana, serta membalas setiap update status yang lewat.
+        if (
+            asalChat.endsWith('@g.us') ||          // grup
+            asalChat.endsWith('@broadcast') ||     // termasuk status@broadcast
+            asalChat.endsWith('@newsletter')       // channel
+        ) return;
 
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
         const pengirim = msg.key.remoteJidAlt || msg.key.remoteJid;
-        
+
         // 🌟 MENGAMBIL NAMA PENGIRIM DARI PROFIL WA MEREKA
         const namaPengirim = msg.pushName || 'Kak'; 
 
@@ -254,7 +339,21 @@ async function connectToWhatsApp() {
             }
 
             // 2. CEK STATUS ALUR PERCAKAPAN SAAT INI
-            const session = userSessions.get(pengirim);
+            let session = userSessions.get(pengirim);
+
+            // Sesi yang ditinggalkan user akan dilupakan. Tanpa ini, orang yang
+            // mengetik *i* lalu pergi akan tersangkut di langkah itu selamanya:
+            // sapaan biasa keesokan harinya langsung dikira isi pengingat.
+            if (session && waktuSekarang - (session.terakhirAktif || 0) > SESI_KEDALUWARSA_MS) {
+                userSessions.delete(pengirim);
+                session = undefined;
+                await sock.sendMessage(pengirim, {
+                    text: `⏳ Sesi sebelumnya sudah kedaluwarsa karena terlalu lama tidak dilanjutkan.\n\nKetik *i* (atau *ingatkan*) untuk memulai lagi dari awal.`
+                });
+                return;
+            }
+
+            if (session) session.terakhirAktif = waktuSekarang;
 
             if (session) {
                 // TAHAP 1: Bot sedang menunggu input Pesan
@@ -426,12 +525,12 @@ async function connectToWhatsApp() {
             if (lowerText === 'ingatkan' || lowerText === 'i') {
                 // Cek jumlah jadwal aktif (pending), batasi maksimal 50 agar tidak membebani sistem
                 const checkCount = await db.get(`SELECT COUNT(id) as count FROM reminders WHERE nomor_wa = ? AND status = 'pending'`, [pengirim]);
-                if (checkCount && checkCount.count >= 50) {
-                    await sock.sendMessage(pengirim, { text: `⚠️ *Batas Maksimal Pengingat Tercapai!*\nAnda sudah memiliki 50 jadwal aktif. Silakan hapus beberapa jadwal yang sudah tidak relevan dengan mengetik *j* lalu *h [nomor]* sebelum membuat yang baru.` });
+                if (checkCount && checkCount.count >= MAX_REMINDER_PER_USER) {
+                    await sock.sendMessage(pengirim, { text: `⚠️ *Batas Maksimal Pengingat Tercapai!*\nAnda sudah memiliki ${MAX_REMINDER_PER_USER} jadwal aktif. Silakan hapus beberapa jadwal yang sudah tidak relevan dengan mengetik *j* lalu *h [nomor]* sebelum membuat yang baru.` });
                     return;
                 }
 
-                userSessions.set(pengirim, { step: 'WAITING_MESSAGE' });
+                userSessions.set(pengirim, { step: 'WAITING_MESSAGE', terakhirAktif: waktuSekarang });
                 await sock.sendMessage(pengirim, { 
                     text: `Halo Kak ${namaPengirim}, apa pesan pengingatnya?\n\n_(Balas dengan inti pesannya saja, contoh: "Bayar tagihan listrik". Ketik *b* untuk batal)_` 
                 });
@@ -476,7 +575,7 @@ async function connectToWhatsApp() {
                     return;
                 }
 
-                userSessions.set(pengirim, { step: 'WAITING_DELETE_ALL' });
+                userSessions.set(pengirim, { step: 'WAITING_DELETE_ALL', terakhirAktif: waktuSekarang });
                 await sock.sendMessage(pengirim, { 
                     text: `⚠️ Anda yakin ingin menghapus *${check.count} jadwal aktif*?\n\nBalas *y* untuk konfirmasi, atau ketik *b* untuk membatalkan.` 
                 });
@@ -537,7 +636,7 @@ async function connectToWhatsApp() {
                 await sock.sendMessage(pengirim, { text: `✅ Jadwal *"${targetJadwal.pesan}"* berhasil dihapus.` });
             }
             else if (lowerText === 'saran' || lowerText === 'lapor' || lowerText === 'feedback') {
-                userSessions.set(pengirim, { step: 'WAITING_FEEDBACK' });
+                userSessions.set(pengirim, { step: 'WAITING_FEEDBACK', terakhirAktif: waktuSekarang });
                 await sock.sendMessage(pengirim, { 
                     text: `Halo Kak ${namaPengirim}, silakan ketik saran, masukan, keluhan, atau laporan *bug* mengenai bot ini di bawah.\n\n_(Ketik *b* jika ingin membatalkan)_` 
                 });
@@ -553,64 +652,63 @@ async function connectToWhatsApp() {
     });
 }
 
+// Penjaga agar dua putaran cron tidak berjalan bersamaan. Karena sekarang ada
+// jeda antar pengiriman, satu putaran bisa memakan waktu lebih dari satu menit.
+let cronSedangBerjalan = false;
+
 // Berjalan setiap 1 menit (* * * * *)
 cron.schedule('* * * * *', async () => {
     if (!sock || !db) return; // Lewati jika WA/DB belum siap
+    if (cronSedangBerjalan) return;
 
-    const waktuSekarang = new Date().getTime();
-
+    cronSedangBerjalan = true;
     try {
-        // Ambil semua jadwal 'pending' sekaligus MENGGABUNGKANNYA (JOIN) dengan nama dari tabel users
+        const waktuSekarang = new Date().getTime();
+
+        // Ambil jadwal 'pending' sekaligus MENGGABUNGKANNYA (JOIN) dengan nama dari tabel users.
+        // Dibatasi per putaran: kalau bot sempat mati beberapa jam, tunggakan
+        // dicicil beberapa putaran alih-alih diledakkan sekaligus ke WhatsApp.
         const pendingReminders = await db.all(`
-            SELECT r.id, r.nomor_wa, r.pesan, r.tipe_pengulangan, r.waktu_eksekusi, u.nama 
+            SELECT r.id, r.nomor_wa, r.pesan, r.tipe_pengulangan, r.waktu_eksekusi, u.nama
             FROM reminders r
             LEFT JOIN users u ON r.nomor_wa = u.nomor_wa
             WHERE r.status = 'pending' AND r.waktu_eksekusi <= ?
-        `, [waktuSekarang]);
+            ORDER BY r.waktu_eksekusi ASC
+            LIMIT ?
+        `, [waktuSekarang, MAX_KIRIM_PER_PUTARAN]);
 
         if (pendingReminders.length === 0) return;
 
         console.log(`⏰ [Cron] Menemukan ${pendingReminders.length} reminder untuk dieksekusi...`);
 
-        // Eksekusi pengiriman pesan satu per satu
-        for (const reminder of pendingReminders) {
+        // Eksekusi pengiriman pesan satu per satu, dengan jeda di antaranya
+        for (const [urutan, reminder] of pendingReminders.entries()) {
             try {
+                if (urutan > 0) await tidur(JEDA_KIRIM_MS);
+
                 // Gunakan nama dari database, jika kosong panggil Kak
                 const namaUser = reminder.nama || 'Kak';
 
                 // PESAN UTAMA DITARUH DI PALING ATAS AGAR MUNCUL DI NOTIFIKASI
-                await sock.sendMessage(reminder.nomor_wa, { 
-                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!` 
+                await sock.sendMessage(reminder.nomor_wa, {
+                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!`
                 });
 
-                // Update status atau jadwal ulang berdasarkan tipe pengulangan
-                if (reminder.tipe_pengulangan === 'harian') {
-                    // Tambah 24 jam (86400000 ms) ke waktu eksekusi saat ini
-                    const nextTime = reminder.waktu_eksekusi + 86400000;
-                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
-                    console.log(`🔁 Pengingat harian dijadwalkan ulang untuk besok.`);
-                } else if (reminder.tipe_pengulangan === 'mingguan') {
-                    // Tambah 7 hari (604800000 ms) ke waktu eksekusi
-                    const nextTime = reminder.waktu_eksekusi + 604800000;
-                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
-                    console.log(`🔁 Pengingat mingguan dijadwalkan ulang untuk minggu depan.`);
-                } else if (reminder.tipe_pengulangan === 'bulanan') {
-                    const dateObj = new Date(reminder.waktu_eksekusi);
-                    dateObj.setMonth(dateObj.getMonth() + 1);
-                    const nextTime = dateObj.getTime();
-                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
-                    console.log(`🔁 Pengingat bulanan dijadwalkan ulang untuk bulan depan.`);
-                } else if (reminder.tipe_pengulangan === 'tahunan') {
-                    const dateObj = new Date(reminder.waktu_eksekusi);
-                    dateObj.setFullYear(dateObj.getFullYear() + 1);
-                    const nextTime = dateObj.getTime();
-                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [nextTime, reminder.id]);
-                    console.log(`🔁 Pengingat tahunan dijadwalkan ulang untuk tahun depan.`);
+                // Jadwal ulang ke kemunculan berikutnya yang masih di masa depan,
+                // atau tandai selesai bila tipenya 'sekali'.
+                const berikutnya = hitungJadwalBerikutnya(
+                    reminder.waktu_eksekusi,
+                    reminder.tipe_pengulangan,
+                    waktuSekarang
+                );
+
+                if (berikutnya) {
+                    await db.run(`UPDATE reminders SET waktu_eksekusi = ? WHERE id = ?`, [berikutnya, reminder.id]);
+                    console.log(`🔁 Pengingat ${reminder.tipe_pengulangan} dijadwalkan ulang ke ${new Date(berikutnya).toLocaleString('id-ID')}`);
                 } else {
-                    // Jika 'sekali', tandai sent agar tidak terkirim lagi
                     await db.run(`UPDATE reminders SET status = 'sent' WHERE id = ?`, [reminder.id]);
                 }
-                
+
                 console.log(`✅ Sukses mengirim reminder ke ${reminder.nomor_wa.split('@')[0]}`);
             } catch (sendError) {
                 console.error(`❌ Gagal mengirim ke ${reminder.nomor_wa}:`, sendError);
@@ -618,6 +716,8 @@ cron.schedule('* * * * *', async () => {
         }
     } catch (error) {
         console.error('❌ Error saat mengeksekusi cron SQLite:', error);
+    } finally {
+        cronSedangBerjalan = false;
     }
 });
 
