@@ -5,7 +5,37 @@ on:
     branches: [main]
 
 jobs:
+  # Gerbang mutu: deploy TIDAK boleh jalan kalau tahap ini gagal.
+  # Dibuat setelah kejadian syntax error di lib/auto-backup.js lolos ke server
+  # dan membuat bot mati total (require gagal sebelum WA/DB sempat dimuat).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ambil kode dari repo
+        uses: actions/checkout@v4
+
+      - name: Siapkan Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependency
+        run: npm ci
+
+      - name: Cek sintaks semua file JS
+        run: |
+          node --check index.js
+          for f in lib/*.js test/*.js; do
+            echo "  memeriksa $f"
+            node --check "$f"
+          done
+
+      - name: Jalankan test parser
+        run: npm test
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Ambil kode dari repo
@@ -18,7 +48,7 @@ jobs:
           username: ${{ secrets.REMOTE_USER }}
           port: ${{ secrets.REMOTE_PORT }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "index.js,package.json,package-lock.json,lib"
+          source: "index.js,package.json,package-lock.json,lib,test"
           target: ${{ secrets.TARGET_DIR }}
           overwrite: true
 
@@ -30,6 +60,17 @@ jobs:
           port: ${{ secrets.REMOTE_PORT }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
+            set -e
             cd ${{ secrets.TARGET_DIR }}
             npm ci --omit=dev
-            pm2 start index.js --name reminder-bot || pm2 restart reminder-bot
+
+            # Server umumnya UTC. Tanpa TZ ini, "besok jam 8" jadi 15:00 WIB.
+            # index.js juga sudah punya default Asia/Jakarta sebagai pengaman.
+            export TZ=Asia/Jakarta
+
+            # restart dulu; kalau prosesnya memang belum ada, baru start.
+            # --update-env agar TZ di atas benar-benar terbawa ke proses baru.
+            pm2 restart reminder-bot --update-env || pm2 start index.js --name reminder-bot
+
+            # Supaya bot hidup lagi sendiri setelah server reboot.
+            pm2 save
