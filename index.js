@@ -4,6 +4,9 @@
 // tersimpan sebagai 08:00 UTC alias 15:00 WIB. Bisa ditimpa lewat env TZ.
 process.env.TZ = process.env.TZ || 'Asia/Jakarta';
 
+// Cegah libsignal mencetak private key sesi WhatsApp ke log (lihat modulnya).
+require('./lib/quiet-libsignal').redamLogSesi();
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
