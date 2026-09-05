@@ -68,6 +68,11 @@ jobs:
             # index.js juga sudah punya default Asia/Jakarta sebagai pengaman.
             export TZ=Asia/Jakarta
 
+            # Nomor tujuan auto-backup. Sengaja lewat secret, bukan di source
+            # code, karena isinya nomor pribadi. Kalau secret ini belum dibuat,
+            # bot tetap jalan normal dan hanya melewati fitur backup.
+            export ADMIN_WA='${{ secrets.ADMIN_WA }}'
+
             # restart dulu; kalau prosesnya memang belum ada, baru start.
             # --update-env agar TZ di atas benar-benar terbawa ke proses baru.
             pm2 restart reminder-bot --update-env || pm2 start index.js --name reminder-bot
