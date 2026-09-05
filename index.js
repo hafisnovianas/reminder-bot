@@ -16,6 +16,9 @@ const { open } = require('sqlite');
 
 // Semua ambang & nomor admin kini datang dari environment (lihat lib/config.js)
 const {
+    ADMIN_JID,
+    DB_PATH,
+    SIMPAN_RIWAYAT_HARI,
     SPAM_THRESHOLD,
     SPAM_WINDOW_MS,
     MAX_REMINDER_PER_USER,
@@ -87,11 +90,12 @@ async function lanjutKeTahapPengulangan(pengirim, session, targetDate) {
 
 // ========================================================
 async function initDatabase() {
-    // Membuka atau membuat file database.sqlite di folder yang sama
+    // Path absolut (lihat lib/config.js) agar tidak bergantung cwd pm2
     db = await open({
-        filename: './database.sqlite',
+        filename: DB_PATH,
         driver: sqlite3.Database
     });
+    console.log(`🗄️  Database: ${DB_PATH}`);
 
     // Membuat tabel 'users' untuk melacak siapa saja yang sudah menyimpan kontak
     await db.exec(`
@@ -132,7 +136,13 @@ async function initDatabase() {
     } catch (e) {
         // Kolom sudah ada, aman dilanjutkan
     }
-    
+
+    // Index untuk dua query yang paling sering jalan: cron tiap menit mencari
+    // jadwal jatuh tempo, dan tiap user membuka daftar jadwalnya sendiri.
+    // Tanpa ini SQLite memindai seluruh tabel setiap 60 detik.
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_reminders_jatuh_tempo ON reminders (status, waktu_eksekusi)`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_reminders_per_user ON reminders (nomor_wa, status, waktu_eksekusi)`);
+
     console.log('📦 Database SQLite siap dan tabel telah diperiksa.');
 }
 
@@ -220,7 +230,7 @@ async function connectToWhatsApp() {
             console.log('✅ WhatsApp Berhasil Terhubung! Bot Reminder Siap!');
             sedangMenghubungkan = false;
             percobaanUlang = 0; // koneksi sehat, reset jeda backoff
-            mulaiAutoBackup(sock);
+            mulaiAutoBackup(sock, db);
         }
     });
 
@@ -230,7 +240,23 @@ async function connectToWhatsApp() {
         // chat basi dan bisa membuat ulang jadwal yang sudah lama selesai.
         if (m.type !== 'notify') return;
 
-        const msg = m.messages[0];
+        // Satu batch bisa berisi lebih dari satu pesan. Versi lama hanya
+        // mengambil m.messages[0], sehingga pesan lain dalam batch yang sama
+        // hilang tanpa jejak ketika beberapa pesan tiba berbarengan.
+        for (const msg of m.messages) {
+            try {
+                await tanganiPesan(msg);
+            } catch (e) {
+                console.error('❌ Error tak terduga saat memproses pesan:', e);
+            }
+        }
+    });
+
+    /**
+     * Tangani SATU pesan masuk. Semua `return` di dalamnya berarti "selesai
+     * dengan pesan ini", bukan menghentikan sisa batch.
+     */
+    async function tanganiPesan(msg) {
         if (!msg?.message || msg.key.fromMe) return;
 
         const asalChat = msg.key.remoteJid || '';
@@ -635,6 +661,31 @@ async function connectToWhatsApp() {
                 await db.run(`DELETE FROM reminders WHERE id = ?`, [targetJadwal.id]);
                 await sock.sendMessage(pengirim, { text: `✅ Jadwal *"${targetJadwal.pesan}"* berhasil dihapus.` });
             }
+            // Perintah khusus admin: baca masukan yang selama ini masuk.
+            // Tanpa ini tabel feedbacks hanya bisa dilihat lewat SQL manual di
+            // server, sehingga saran user praktis tidak pernah terbaca.
+            else if ((lowerText === 'lihat saran' || lowerText === 'ls') && ADMIN_JID && pengirim === ADMIN_JID) {
+                const daftarSaran = await db.all(
+                    `SELECT nama, pesan, created_at FROM feedbacks ORDER BY created_at DESC LIMIT 10`
+                );
+
+                if (daftarSaran.length === 0) {
+                    await sock.sendMessage(pengirim, { text: `📭 Belum ada saran atau laporan yang masuk.` });
+                } else {
+                    const total = await db.get(`SELECT COUNT(id) as count FROM feedbacks`);
+                    let teks = `📬 *${daftarSaran.length} Masukan Terbaru* (total ${total.count})\n\n`;
+
+                    daftarSaran.forEach((s, i) => {
+                        const waktu = new Date(s.created_at).toLocaleString('id-ID', {
+                            day: 'numeric', month: 'short', year: 'numeric',
+                            hour: '2-digit', minute: '2-digit'
+                        });
+                        teks += `${i + 1}. *${s.nama}* — ${waktu}\n${s.pesan}\n\n`;
+                    });
+
+                    await sock.sendMessage(pengirim, { text: teks.trim() });
+                }
+            }
             else if (lowerText === 'saran' || lowerText === 'lapor' || lowerText === 'feedback') {
                 userSessions.set(pengirim, { step: 'WAITING_FEEDBACK', terakhirAktif: waktuSekarang });
                 await sock.sendMessage(pengirim, { 
@@ -649,7 +700,7 @@ async function connectToWhatsApp() {
         } catch (error) {
             console.error('❌ Error saat query pengecekan SQLite:', error);
         }
-    });
+    }
 }
 
 // Penjaga agar dua putaran cron tidak berjalan bersamaan. Karena sekarang ada
@@ -718,6 +769,54 @@ cron.schedule('* * * * *', async () => {
         console.error('❌ Error saat mengeksekusi cron SQLite:', error);
     } finally {
         cronSedangBerjalan = false;
+    }
+});
+
+// ==========================================
+// PEMBERSIHAN BERKALA (setiap hari pukul 03:00)
+// ==========================================
+// Tanpa ini tabel reminders menyimpan seluruh riwayat selamanya, dan kedua Map
+// di memori terus bertambah seiring jumlah orang yang pernah menghubungi bot.
+cron.schedule('0 3 * * *', async () => {
+    try {
+        if (db) {
+            const batas = Date.now() - SIMPAN_RIWAYAT_HARI * 86400000;
+            const hasil = await db.run(
+                `DELETE FROM reminders WHERE status = 'sent' AND waktu_eksekusi < ?`,
+                [batas]
+            );
+            if (hasil.changes > 0) {
+                console.log(`🧹 ${hasil.changes} riwayat pengingat lama dibersihkan.`);
+            }
+        }
+
+        const sekarang = Date.now();
+
+        // Sesi yang ditinggalkan sudah kedaluwarsa secara logika saat user
+        // mengirim pesan lagi, tapi milik user yang tidak pernah kembali tetap
+        // menempati memori. Sapu di sini.
+        let sesiDibuang = 0;
+        for (const [jid, sesi] of userSessions) {
+            if (sekarang - (sesi.terakhirAktif || 0) > SESI_KEDALUWARSA_MS) {
+                userSessions.delete(jid);
+                sesiDibuang += 1;
+            }
+        }
+
+        // Entri anti-spam hanya berguna selama window-nya berjalan.
+        let spamDibuang = 0;
+        for (const [jid, data] of rateLimitMap) {
+            if (sekarang - data.firstMessageTime > SPAM_WINDOW_MS) {
+                rateLimitMap.delete(jid);
+                spamDibuang += 1;
+            }
+        }
+
+        if (sesiDibuang || spamDibuang) {
+            console.log(`🧹 Memori dibersihkan: ${sesiDibuang} sesi, ${spamDibuang} entri anti-spam.`);
+        }
+    } catch (error) {
+        console.error('❌ Error saat pembersihan berkala:', error);
     }
 });
 
