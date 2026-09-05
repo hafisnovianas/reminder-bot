@@ -1,3 +1,9 @@
+// Zona waktu WAJIB dipaksa sebelum modul lain sempat membuat objek Date.
+// Server (mis. AWS) default-nya UTC, sedangkan seluruh logika jadwal bot ini
+// memakai jam lokal (setHours, toLocaleString). Tanpa baris ini "besok jam 8"
+// tersimpan sebagai 08:00 UTC alias 15:00 WIB. Bisa ditimpa lewat env TZ.
+process.env.TZ = process.env.TZ || 'Asia/Jakarta';
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
@@ -620,7 +626,8 @@ cron.schedule('* * * * *', async () => {
 // ==========================================
 async function startSystem() {
     console.log('🚀 Memulai sistem Bot Reminder...');
-    
+    console.log(`🕒 Zona waktu aktif: ${process.env.TZ} | Sekarang: ${new Date().toLocaleString('id-ID')}`);
+
     // 1. Inisialisasi Database Dulu
     await initDatabase();
     
