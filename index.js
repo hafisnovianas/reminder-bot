@@ -314,7 +314,7 @@ async function connectToWhatsApp() {
 
             // 2. Jika user belum ada atau belum registrasi (is_registered = 0)
             if (!user || user.is_registered === 0) {
-                if (['SUDAH', 'S', 'Y'].includes(text.toUpperCase().trim())) {
+                if (text.toUpperCase().trim() === 'SUDAH') {
                     if (!user) {
                         await db.run(`INSERT INTO users (nomor_wa, nama, is_registered, created_at) VALUES (?, ?, 1, ?)`, [pengirim, namaPengirim, waktuSekarang]);
                     } else {
@@ -550,7 +550,41 @@ async function connectToWhatsApp() {
                 }
             }
 
-            // 3. JIKA TIDAK ADA ALUR AKTIF (MULAI BARU)
+            // 3. CEK FITUR SNOOZE
+            const matchSnooze = lowerText.match(/^s(?:\s*(\d+))?$/);
+            if (matchSnooze) {
+                const durasiSnoozeStr = matchSnooze[1];
+                const durasiMenit = durasiSnoozeStr ? parseInt(durasiSnoozeStr, 10) : 5;
+                
+                // Cari 1 jadwal terakhir yang sudah 'sent' maksimal 1 jam (3600000 ms) yang lalu
+                const waktuBatas = waktuSekarang - 3600000;
+                const lastSentReminder = await db.get(
+                    `SELECT * FROM reminders WHERE nomor_wa = ? AND status = 'sent' AND waktu_eksekusi >= ? ORDER BY waktu_eksekusi DESC LIMIT 1`,
+                    [pengirim, waktuBatas]
+                );
+
+                if (lastSentReminder) {
+                    const waktuSnooze = waktuSekarang + (durasiMenit * 60 * 1000);
+                    // Buat pengingat baru dengan tipe 'sekali'
+                    await db.run(
+                        `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan) VALUES (?, ?, ?, ?, ?, ?)`,
+                        [pengirim, lastSentReminder.pesan, waktuSnooze, 'pending', waktuSekarang, 'sekali']
+                    );
+                    const formatWaktuLengkapSnooze = new Date(waktuSnooze).toLocaleString('id-ID', {
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                    await sock.sendMessage(pengirim, {
+                        text: `✅ *Snooze aktif!*\n\nSaya akan mengingatkan Anda lagi tentang:\n📝 "${lastSentReminder.pesan}"\n🗓️ Pada: ${formatWaktuLengkapSnooze}`
+                    });
+                } else {
+                    await sock.sendMessage(pengirim, {
+                        text: `❌ Tidak ada pengingat baru-baru ini yang bisa di-snooze.`
+                    });
+                }
+                return;
+            }
+
+            // 4. JIKA TIDAK ADA ALUR AKTIF (MULAI BARU)
             if (lowerText === 'ingatkan' || lowerText === 'i') {
                 // Cek jumlah jadwal aktif (pending), batasi maksimal 50 agar tidak membebani sistem
                 const checkCount = await db.get(`SELECT COUNT(id) as count FROM reminders WHERE nomor_wa = ? AND status = 'pending'`, [pengirim]);
@@ -745,7 +779,7 @@ cron.schedule('* * * * *', async () => {
 
                 // PESAN UTAMA DITARUH DI PALING ATAS AGAR MUNCUL DI NOTIFIKASI
                 await sock.sendMessage(reminder.nomor_wa, {
-                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!`
+                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!\n_(Balas *s* untuk snooze 5 menit, atau *s 10* untuk 10 menit)_`
                 });
 
                 // Jadwal ulang ke kemunculan berikutnya yang masih di masa depan,
