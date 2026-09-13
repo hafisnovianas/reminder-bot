@@ -136,9 +136,12 @@ async function initDatabase() {
     // Tambahkan kolom tipe_pengulangan (Abaikan error jika kolom sudah ada)
     try {
         await db.exec(`ALTER TABLE reminders ADD COLUMN tipe_pengulangan TEXT DEFAULT 'sekali'`);
-    } catch (e) {
-        // Kolom sudah ada, aman dilanjutkan
-    }
+    } catch (e) {}
+
+    // Tambahkan kolom snooze_count untuk Auto-Snooze
+    try {
+        await db.exec(`ALTER TABLE reminders ADD COLUMN snooze_count INTEGER DEFAULT 0`);
+    } catch (e) {}
 
     // Index untuk dua query yang paling sering jalan: cron tiap menit mencari
     // jadwal jatuh tempo, dan tiap user membuka daftar jadwalnya sendiri.
@@ -550,38 +553,20 @@ async function connectToWhatsApp() {
                 }
             }
 
-            // 3. CEK FITUR SNOOZE
-            const matchSnooze = lowerText.match(/^s(?:\s*(\d+))?$/);
-            if (matchSnooze) {
-                const durasiSnoozeStr = matchSnooze[1];
-                const durasiMenit = durasiSnoozeStr ? parseInt(durasiSnoozeStr, 10) : 5;
-                
-                // Cari 1 jadwal terakhir yang sudah 'sent' maksimal 1 jam (3600000 ms) yang lalu
-                const waktuBatas = waktuSekarang - 3600000;
-                const lastSentReminder = await db.get(
-                    `SELECT * FROM reminders WHERE nomor_wa = ? AND status = 'sent' AND waktu_eksekusi >= ? ORDER BY waktu_eksekusi DESC LIMIT 1`,
-                    [pengirim, waktuBatas]
+            // 3. CEK FITUR AUTO-SNOOZE (MENGHENTIKAN SNOOZE)
+            if (['ok', 'stop', 'selesai'].includes(lowerText)) {
+                const updated = await db.run(
+                    `UPDATE reminders SET status = 'sent' WHERE nomor_wa = ? AND status = 'pending' AND tipe_pengulangan = 'auto_snooze'`,
+                    [pengirim]
                 );
-
-                if (lastSentReminder) {
-                    const waktuSnooze = waktuSekarang + (durasiMenit * 60 * 1000);
-                    // Buat pengingat baru dengan tipe 'sekali'
-                    await db.run(
-                        `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan) VALUES (?, ?, ?, ?, ?, ?)`,
-                        [pengirim, lastSentReminder.pesan, waktuSnooze, 'pending', waktuSekarang, 'sekali']
-                    );
-                    const formatWaktuLengkapSnooze = new Date(waktuSnooze).toLocaleString('id-ID', {
-                        hour: '2-digit', minute: '2-digit'
-                    });
+                
+                if (updated.changes > 0) {
                     await sock.sendMessage(pengirim, {
-                        text: `✅ *Snooze aktif!*\n\nSaya akan mengingatkan Anda lagi tentang:\n📝 "${lastSentReminder.pesan}"\n🗓️ Pada: ${formatWaktuLengkapSnooze}`
+                        text: `✅ *Pengingat dihentikan.* Terima kasih!`
                     });
-                } else {
-                    await sock.sendMessage(pengirim, {
-                        text: `❌ Tidak ada pengingat baru-baru ini yang bisa di-snooze.`
-                    });
+                    return;
                 }
-                return;
+                // Jika tidak ada snooze yang sedang berjalan, biarkan jatuh ke alur bawah (sapaan)
             }
 
             // 4. JIKA TIDAK ADA ALUR AKTIF (MULAI BARU)
@@ -757,7 +742,7 @@ cron.schedule('* * * * *', async () => {
         // Dibatasi per putaran: kalau bot sempat mati beberapa jam, tunggakan
         // dicicil beberapa putaran alih-alih diledakkan sekaligus ke WhatsApp.
         const pendingReminders = await db.all(`
-            SELECT r.id, r.nomor_wa, r.pesan, r.tipe_pengulangan, r.waktu_eksekusi, u.nama
+            SELECT r.id, r.nomor_wa, r.pesan, r.tipe_pengulangan, r.waktu_eksekusi, r.snooze_count, u.nama
             FROM reminders r
             LEFT JOIN users u ON r.nomor_wa = u.nomor_wa
             WHERE r.status = 'pending' AND r.waktu_eksekusi <= ?
@@ -777,13 +762,21 @@ cron.schedule('* * * * *', async () => {
                 // Gunakan nama dari database, jika kosong panggil Kak
                 const namaUser = reminder.nama || 'Kak';
 
+                const currentSnoozeCount = reminder.snooze_count || 0;
+                const maxSnooze = 3;
+                
+                let footerText = '';
+                if (currentSnoozeCount < maxSnooze) {
+                    footerText = `\n_(Bot akan mengingatkan lagi dalam 10 menit. Balas *OK* untuk menghentikan)_`;
+                }
+
                 // PESAN UTAMA DITARUH DI PALING ATAS AGAR MUNCUL DI NOTIFIKASI
                 await sock.sendMessage(reminder.nomor_wa, {
-                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!\n_(Balas *s* untuk snooze 5 menit, atau *s 10* untuk 10 menit)_`
+                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!${footerText}`
                 });
 
                 // Jadwal ulang ke kemunculan berikutnya yang masih di masa depan,
-                // atau tandai selesai bila tipenya 'sekali'.
+                // atau tandai selesai bila tipenya 'sekali' atau 'auto_snooze'.
                 const berikutnya = hitungJadwalBerikutnya(
                     reminder.waktu_eksekusi,
                     reminder.tipe_pengulangan,
@@ -795,6 +788,16 @@ cron.schedule('* * * * *', async () => {
                     console.log(`🔁 Pengingat ${reminder.tipe_pengulangan} dijadwalkan ulang ke ${new Date(berikutnya).toLocaleString('id-ID')}`);
                 } else {
                     await db.run(`UPDATE reminders SET status = 'sent' WHERE id = ?`, [reminder.id]);
+                }
+                
+                // BUAT JADWAL AUTO-SNOOZE JIKA BELUM MENCAPAI BATAS
+                if (currentSnoozeCount < maxSnooze) {
+                    const nextSnoozeTime = waktuSekarang + (10 * 60 * 1000);
+                    await db.run(
+                        `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan, snooze_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        [reminder.nomor_wa, reminder.pesan, nextSnoozeTime, 'pending', waktuSekarang, 'auto_snooze', currentSnoozeCount + 1]
+                    );
+                    console.log(`💤 Auto-snooze (ke-${currentSnoozeCount + 1}) dijadwalkan untuk ${reminder.nomor_wa.split('@')[0]}`);
                 }
 
                 console.log(`✅ Sukses mengirim reminder ke ${reminder.nomor_wa.split('@')[0]}`);
