@@ -11,7 +11,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
-const { mulaiAutoBackup } = require('./lib/auto-backup');
+const { mulaiAutoBackup, jalankanBackupDatabase } = require('./lib/auto-backup');
 
 // Modul SQLite
 const sqlite3 = require('sqlite3');
@@ -682,6 +682,15 @@ async function connectToWhatsApp() {
                 
                 await db.run(`DELETE FROM reminders WHERE id = ?`, [targetJadwal.id]);
                 await sock.sendMessage(pengirim, { text: `✅ Jadwal *"${targetJadwal.pesan}"* berhasil dihapus.` });
+            }
+            else if (lowerText === 'backup' && ADMIN_JID && pengirim === ADMIN_JID) {
+                await sock.sendMessage(pengirim, { text: `⏳ Memulai backup manual ke Google Drive...` });
+                const sukses = await jalankanBackupDatabase(db);
+                if (sukses) {
+                    await sock.sendMessage(pengirim, { text: `✅ Backup berhasil diunggah ke Google Drive.` });
+                } else {
+                    await sock.sendMessage(pengirim, { text: `❌ Gagal mengunggah backup. Cek log server untuk detailnya.` });
+                }
             }
             // Perintah khusus admin: baca masukan yang selama ini masuk.
             // Tanpa ini tabel feedbacks hanya bisa dilihat lewat SQL manual di
