@@ -2,13 +2,13 @@
 
 Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna gratis, kita harus menggunakan metode **OAuth2**. Dengan metode ini, bot akan meminjam identitas Gmail Anda (yang memiliki kuota 15GB atau lebih) untuk melakukan *upload* file ke Google Drive.
 
-## Langkah 1: Buat OAuth Consent Screen (Branding)
-*(Catatan: Tampilan Google Cloud sering berubah. Saat ini Google menggunakan antarmuka baru bernama "Google Auth Platform" yang membagi pengisian form menjadi beberapa tahap).*
+## Langkah 1: Konfigurasi Google Auth Platform (Branding)
+*(Catatan: Tampilan Google Cloud telah diperbarui menjadi "Google Auth Platform").*
 
 1. Buka [Google Cloud Console](https://console.cloud.google.com/).
-2. Pastikan Anda berada di project Anda melalui menu *dropdown* di bagian atas.
-3. Cara tercepat menuju halamannya adalah dengan mengklik tautan jalan pintas ini: **[Buka Halaman OAuth Consent Screen](https://console.cloud.google.com/apis/credentials/consent)**. (Atau cari di menu: **APIs & Services** > **OAuth consent screen**).
-4. Klik tombol **Get Started** atau **Create** untuk mulai membuat *Branding*.
+2. Pastikan Anda berada di *project* Anda melalui menu *dropdown* di bagian atas.
+3. Klik tautan jalan pintas ini untuk langsung menuju halaman konfigurasi: **[Buka Halaman Google Auth Platform](https://console.cloud.google.com/auth/overview)**. (Atau secara manual cari di menu navigasi utama: **Google Auth Platform** > **Overview**).
+4. Di halaman *OAuth Overview* tersebut, klik tombol biru **Get Started** di bagian tengah bawah layar untuk mulai membuat *Branding*.
 5. **Tahap 1: App Information**
    Isi `App name` (misal: `Reminder Bot Backup`) dan pilih email Anda di kolom `User support email`. Lalu klik **Next**.
    <br>![App Information](img/01-app-info.png)
@@ -20,10 +20,10 @@ Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna
    <br>![Contact Information](img/03-contact-info.png)
 
 ## Langkah 2: Buat OAuth Client ID
-1. Pindah ke menu **APIs & Services** > **Credentials** (atau ke menu **Clients** di sidebar kiri).
-2. Klik tombol **+ CREATE CREDENTIALS** (atau **Create Client**) di bagian atas, lalu pilih **OAuth client ID**.
+1. Setelah *Branding* selesai, klik menu **Clients** di *sidebar* sebelah kiri (masih di dalam bagian *Google Auth Platform*).
+2. Klik tombol **+ Create client** di bagian atas (di sebelah tulisan *Clients*).
    <br>![Menu Create OAuth Client ID](img/04-create-client.png)
-3. Di kolom **Application type**, klik dan pilih **Web application**.
+3. Pada halaman pembuatan *Client*, pilih **Web application** di menu *dropdown* Application type.
    <br>![Pilih Web Application](img/05-web-client-form.png)
 4. Beri nama (bebas), misal: `Web Client 1`.
 5. Scroll ke bawah ke bagian **Authorized redirect URIs**.
@@ -33,8 +33,9 @@ Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna
 ## Langkah 3: Unduh File JSON Kunci
 1. Setelah berhasil dibuat, akan muncul jendela *popup* berisi Client ID dan Client Secret Anda.
    <br>![Popup Client ID & Secret](img/06-client-secret.png)
-2. Klik tombol **DOWNLOAD JSON** di bagian paling bawah *popup* tersebut.
-3. Ubah nama file yang baru didownload tersebut menjadi **`oauth_credentials.json`**.
+2. Di jendela *popup* tersebut, **tidak ada tombol *download***. Silakan klik saja tombol **OK** di pojok kanan bawah *popup* untuk menutupnya.
+3. Anda akan dikembalikan ke daftar *Clients*. Di baris nama *Client* yang baru Anda buat, lihat ke sisi paling kanan dan klik **ikon Download** (berbentuk panah ke bawah) untuk mengunduh file JSON-nya.
+4. Ubah nama file yang baru didownload tersebut menjadi **`oauth_credentials.json`**.
 4. Pindahkan file `oauth_credentials.json` ini ke dalam **folder proyek bot Anda** (bersamaan dengan letak `index.js`).
 
 ## Langkah 4: Jalankan Script Pembangkit Token
