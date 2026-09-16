@@ -2,33 +2,37 @@
 
 Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna gratis, kita harus menggunakan metode **OAuth2**. Dengan metode ini, bot akan meminjam identitas Gmail Anda (yang memiliki kuota 15GB atau lebih) untuk melakukan *upload* file ke Google Drive.
 
-## Langkah 1: Aktifkan API & Buat OAuth Consent Screen
+## Langkah 1: Buat OAuth Consent Screen (Branding)
+*(Catatan: Tampilan Google Cloud sering berubah. Saat ini Google menggunakan antarmuka baru bernama "Google Auth Platform" yang membagi pengisian form menjadi beberapa tahap).*
+
 1. Buka [Google Cloud Console](https://console.cloud.google.com/).
-2. Pastikan Anda berada di project yang sama dengan sebelumnya (misal: `reminder-bot`).
-3. Cara tercepat menuju halamannya adalah dengan mengklik tautan jalan pintas ini: **[Buka Halaman OAuth Consent Screen](https://console.cloud.google.com/apis/credentials/consent)**. 
-4. Pilih tipe user **External** lalu klik **Create**.
-<br>![Pilih External](img/01-choose-external.png)
-5. Isi formulir yang wajib saja (seperti yang terlihat pada gambar di bawah):
-   - **App name**: `Reminder Bot Backup`
-   - **User support email**: (Pilih email Anda)
-   - **Developer contact information**: (Ketik email Anda lagi)
-   - Klik **Save and Continue** sampai selesai (lewati bagian *scopes/test users*).
-<br>![Isi Form OAuth](img/02-consent-form.png)
+2. Pastikan Anda berada di project Anda melalui menu *dropdown* di bagian atas.
+3. Cara tercepat menuju halamannya adalah dengan mengklik tautan jalan pintas ini: **[Buka Halaman OAuth Consent Screen](https://console.cloud.google.com/apis/credentials/consent)**. (Atau cari di menu: **APIs & Services** > **OAuth consent screen**).
+4. Klik tombol **Get Started** atau **Create** untuk mulai membuat *Branding*.
+5. **Tahap 1: App Information**
+   Isi `App name` (misal: `Reminder Bot Backup`) dan pilih email Anda di kolom `User support email`. Lalu klik **Next**.
+   <br>![App Information](img/01-app-info.png)
+6. **Tahap 2: Audience**
+   Pilih tipe user **External** (agar bot bisa dipakai dari luar) lalu klik **Next**.
+   <br>![Audience External](img/02-audience.png)
+7. **Tahap 3: Contact Information**
+   Isi email Anda di kolom `Developer contact information`. Centang persetujuan jika ada, lalu klik **Create**.
+   <br>![Contact Information](img/03-contact-info.png)
 
 ## Langkah 2: Buat OAuth Client ID
-1. Pindah ke menu **APIs & Services** > **Credentials**.
-2. Klik tombol **+ CREATE CREDENTIALS** di bagian atas, lalu pilih **OAuth client ID**.
-<br>![Menu Create OAuth Client ID](img/03-create-oauth-client.png)
-3. Di kolom **Application type**, pilih **Web application**.
+1. Pindah ke menu **APIs & Services** > **Credentials** (atau ke menu **Clients** di sidebar kiri).
+2. Klik tombol **+ CREATE CREDENTIALS** (atau **Create Client**) di bagian atas, lalu pilih **OAuth client ID**.
+   <br>![Menu Create OAuth Client ID](img/04-create-client.png)
+3. Di kolom **Application type**, klik dan pilih **Web application**.
+   <br>![Pilih Web Application](img/05-web-client-form.png)
 4. Beri nama (bebas), misal: `Web Client 1`.
 5. Scroll ke bawah ke bagian **Authorized redirect URIs**.
 6. Klik **+ ADD URI** lalu ketik persis seperti ini: `http://localhost:3000/oauth2callback`
 7. Klik tombol **CREATE**.
-<br>![Form Pembuatan OAuth Client](img/04-web-client-form.png)
 
 ## Langkah 3: Unduh File JSON Kunci
 1. Setelah berhasil dibuat, akan muncul jendela *popup* berisi Client ID dan Client Secret Anda.
-<br>![Popup Client ID & Secret](img/05-oauth-client-created-modal.png)
+   <br>![Popup Client ID & Secret](img/06-client-secret.png)
 2. Klik tombol **DOWNLOAD JSON** di bagian paling bawah *popup* tersebut.
 3. Ubah nama file yang baru didownload tersebut menjadi **`oauth_credentials.json`**.
 4. Pindahkan file `oauth_credentials.json` ini ke dalam **folder proyek bot Anda** (bersamaan dengan letak `index.js`).
