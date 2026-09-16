@@ -5,15 +5,15 @@ Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna
 ## Langkah 1: Aktifkan API & Buat OAuth Consent Screen
 1. Buka [Google Cloud Console](https://console.cloud.google.com/).
 2. Pastikan Anda berada di project yang sama dengan sebelumnya (misal: `reminder-bot`).
-3. Cara tercepat menuju halamannya adalah dengan mengklik tautan jalan pintas ini: **[Buka Halaman OAuth Consent Screen](https://console.cloud.google.com/apis/credentials/consent)**. (Atau secara manual: cari menu navigasi kiri, pilih **APIs & Services**, lalu cari **OAuth consent screen**).
-<br>![Menu OAuth Consent](img/01-menu-oauth.png)
-4. Pilih **External** lalu klik **Create**.
-5. Isi formulir yang wajib saja:
+3. Cara tercepat menuju halamannya adalah dengan mengklik tautan jalan pintas ini: **[Buka Halaman OAuth Consent Screen](https://console.cloud.google.com/apis/credentials/consent)**. 
+4. Pilih tipe user **External** lalu klik **Create**.
+<br>![Pilih External](img/01-choose-external.png)
+5. Isi formulir yang wajib saja (seperti yang terlihat pada gambar di bawah):
    - **App name**: `Reminder Bot Backup`
    - **User support email**: (Pilih email Anda)
    - **Developer contact information**: (Ketik email Anda lagi)
-   - Klik **Save and Continue** sampai selesai (tidak perlu isi scopes/test users).
-   <br>![OAuth Consent Form](img/02-consent-form.png)
+   - Klik **Save and Continue** sampai selesai (lewati bagian *scopes/test users*).
+<br>![Isi Form OAuth](img/02-consent-form.png)
 
 ## Langkah 2: Buat OAuth Client ID
 1. Pindah ke menu **APIs & Services** > **Credentials**.
