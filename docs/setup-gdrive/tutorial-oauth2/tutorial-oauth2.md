@@ -13,7 +13,8 @@ Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna
    Isi `App name` (misal: `Reminder Bot Backup`) dan pilih email Anda di kolom `User support email`. Lalu klik **Next**.
    <br>![App Information](img/01-app-info.png)
 6. **Tahap 2: Audience**
-   Pilih tipe user **External** (agar bot bisa dipakai dari luar) lalu klik **Next**.
+   Pilih tipe user **External**. 
+   **PENTING:** Di bagian bawah halaman ini, cari bagian **Test users**. Klik tombol **+ Add Users** lalu ketikkan alamat Gmail Anda (email langganan 5TB yang akan dipakai untuk *login*). Jika tidak ditambahkan, Anda akan terkena *Error 403: access_denied* saat *login*. Setelah ditambah, klik **Next**.
    <br>![Audience External](img/02-audience.png)
 7. **Tahap 3: Contact Information**
    Isi email Anda di kolom `Developer contact information`. Centang persetujuan jika ada, lalu klik **Create**.
