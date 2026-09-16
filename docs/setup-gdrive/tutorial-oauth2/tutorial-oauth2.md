@@ -5,25 +5,30 @@ Karena Service Account tidak memiliki kuota penyimpanan (0 bytes) untuk pengguna
 ## Langkah 1: Aktifkan API & Buat OAuth Consent Screen
 1. Buka [Google Cloud Console](https://console.cloud.google.com/).
 2. Pastikan Anda berada di project yang sama dengan sebelumnya (misal: `reminder-bot`).
-3. Di menu sebelah kiri, cari **APIs & Services** > **OAuth consent screen**.
+3. Cara tercepat menuju halamannya adalah dengan mengklik tautan jalan pintas ini: **[Buka Halaman OAuth Consent Screen](https://console.cloud.google.com/apis/credentials/consent)**. (Atau secara manual: cari menu navigasi kiri, pilih **APIs & Services**, lalu cari **OAuth consent screen**).
+<br>![Menu OAuth Consent](img/01-menu-oauth.png)
 4. Pilih **External** lalu klik **Create**.
 5. Isi formulir yang wajib saja:
    - **App name**: `Reminder Bot Backup`
    - **User support email**: (Pilih email Anda)
    - **Developer contact information**: (Ketik email Anda lagi)
    - Klik **Save and Continue** sampai selesai (tidak perlu isi scopes/test users).
+   <br>![OAuth Consent Form](img/02-consent-form.png)
 
 ## Langkah 2: Buat OAuth Client ID
 1. Pindah ke menu **APIs & Services** > **Credentials**.
 2. Klik tombol **+ CREATE CREDENTIALS** di bagian atas, lalu pilih **OAuth client ID**.
+<br>![Menu Create OAuth Client ID](img/03-create-oauth-client.png)
 3. Di kolom **Application type**, pilih **Web application**.
 4. Beri nama (bebas), misal: `Web Client 1`.
 5. Scroll ke bawah ke bagian **Authorized redirect URIs**.
 6. Klik **+ ADD URI** lalu ketik persis seperti ini: `http://localhost:3000/oauth2callback`
 7. Klik tombol **CREATE**.
+<br>![Form Pembuatan OAuth Client](img/04-web-client-form.png)
 
 ## Langkah 3: Unduh File JSON Kunci
 1. Setelah berhasil dibuat, akan muncul jendela *popup* berisi Client ID dan Client Secret Anda.
+<br>![Popup Client ID & Secret](img/05-oauth-client-created-modal.png)
 2. Klik tombol **DOWNLOAD JSON** di bagian paling bawah *popup* tersebut.
 3. Ubah nama file yang baru didownload tersebut menjadi **`oauth_credentials.json`**.
 4. Pindahkan file `oauth_credentials.json` ini ke dalam **folder proyek bot Anda** (bersamaan dengan letak `index.js`).
