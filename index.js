@@ -60,6 +60,9 @@ process.on('unhandledRejection', (reason, promise) => {
 // Penerjemah waktu pintar (lihat lib/parse-time.js, diuji di test/parser.test.js)
 const { parseSmartTime } = require('./lib/parse-time');
 
+// Penerjemah pesan AI berbasis Groq
+const { parseJadwalWithAI } = require('./lib/ai-parser');
+
 // Penjadwalan ulang pengingat berulang (diuji di test/recurrence.test.js)
 const { hitungJadwalBerikutnya } = require('./lib/recurrence');
 
@@ -727,6 +730,57 @@ async function connectToWhatsApp() {
                 await sock.sendMessage(pengirim, { 
                     text: `💡 *Pusat Bantuan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat pengingat baru\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\n_Ketik *i* (atau *ingatkan*) untuk mulai membuat jadwal._` 
                 });
+            }
+            else {
+                // --- 🤖 AI NATURAL LANGUAGE INTERCEPTOR ---
+                // Filter ringan: Hanya pesan dengan panjang >10 char yang mengandung kata kunci
+                const kataKunci = ['ingat', 'jadwal', 'besok', 'lusa', 'nanti', 'jam', 'pagi', 'siang', 'sore', 'malam', 'hari', 'tiap', 'setiap'];
+                const isBisaJadiJadwal = kataKunci.some(kata => lowerText.includes(kata));
+                
+                if (userText.length > 10 && userText.length <= 250 && isBisaJadiJadwal) {
+                    // Beritahu pengguna kalau pesan sedang dianalisa AI
+                    await sock.sendMessage(pengirim, { text: `🧠 _AI sedang mencerna jadwal Anda..._` });
+                    
+                    try {
+                        const hasilAI = await parseJadwalWithAI(userText, new Date());
+                        
+                        if (hasilAI && hasilAI.is_jadwal) {
+                            const targetWaktu = new Date(hasilAI.tanggal_waktu_iso).getTime();
+                            
+                            // Cek apakah waktu sudah lewat
+                            if (targetWaktu <= waktuSekarang) {
+                                await sock.sendMessage(pengirim, { text: `❌ AI mendeteksi waktu yang Anda sebutkan sudah berlalu. Silakan ketik jadwal di masa depan.` });
+                                return;
+                            }
+
+                            // Simpan jadwal langsung ke Database
+                            let dbSiklus = 'sekali';
+                            let labelSiklus = 'Hanya sekali';
+                            if (hasilAI.siklus === 'harian') { dbSiklus = 'harian'; labelSiklus = '🔄 Setiap Hari'; }
+                            if (hasilAI.siklus === 'mingguan') { dbSiklus = 'mingguan'; labelSiklus = '🔄 Setiap Minggu'; }
+                            if (hasilAI.siklus === 'bulanan') { dbSiklus = 'bulanan'; labelSiklus = '🔄 Setiap Bulan'; }
+                            if (hasilAI.siklus === 'tahunan') { dbSiklus = 'tahunan'; labelSiklus = '🔄 Setiap Tahun'; }
+
+                            await db.run(
+                                `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan) VALUES (?, ?, ?, ?, ?, ?)`,
+                                [pengirim, hasilAI.pesan, targetWaktu, 'pending', waktuSekarang, dbSiklus]
+                            );
+
+                            const tglFormat = new Date(targetWaktu).toLocaleString('id-ID', {
+                                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                            });
+
+                            await sock.sendMessage(pengirim, { 
+                                text: `✨ *Jadwal Otomatis Tersimpan (AI)!*\n\n📝 "${hasilAI.pesan}"\n🗓️ Mulai: ${tglFormat}\n🔁 Siklus: ${labelSiklus}\n\n_Ketik *j* untuk melihat daftar jadwal Anda._` 
+                            });
+                            
+                            console.log(`🧠 [AI] Jadwal berhasil diproses untuk ${namaPengirim}: ${hasilAI.pesan}`);
+                        }
+                    } catch (error) {
+                        console.error('Error AI Interceptor:', error);
+                        await sock.sendMessage(pengirim, { text: `⚠️ Maaf, sistem AI (Groq) sedang sibuk/gangguan. Silakan buat jadwal secara manual dengan mengetik *i*.` });
+                    }
+                }
             }
         } catch (error) {
             console.error('❌ Error saat query pengecekan SQLite:', error);
