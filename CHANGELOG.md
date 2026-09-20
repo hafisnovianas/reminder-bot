@@ -12,5 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto-Fallback System**: Sistem *hybrid* cerdas yang akan secara otomatis mengalihkan pengguna ke metode pembuatan jadwal manual (tanya-jawab) apabila API Groq sedang *down* atau *rate limit*.
 
 ### Changed
+- **Urutan Alur Manual (Fallback)**: Mengubah urutan pertanyaan (*State Machine*) saat membuat jadwal secara manual atau saat AI gagal. Bot kini akan menanyakan target waktu terlebih dahulu ("Kapan Anda ingin diingatkan?"), baru kemudian menanyakan isi pesan pengingatnya. Hal ini membuat percakapan terasa lebih natural dan tegas.
 - **UX Penyambutan & Panduan**: Menghapus instruksi pembuatan jadwal manual (`ketik i`) dari teks sambutan pendaftaran dan menu panduan (`p`). Menggantinya dengan panduan berfokus pada natural language/AI agar terlihat lebih modern.
 - **GitHub Actions (`deploy.yml`)**: Menghapus langkah `npm test` untuk menghemat kuota *rate limit* API Groq, dan menyuntikkan variabel `GROQ_API_KEY` pada tahap *deploy* PM2.

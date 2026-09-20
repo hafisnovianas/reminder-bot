@@ -83,14 +83,14 @@ function formatWaktuRingkas(date) {
 
 // Setelah waktu final ditentukan, lanjut ke pertanyaan pengulangan.
 // Dipakai baik dari alur normal maupun setelah user memilih jam yang ambigu.
-async function lanjutKeTahapPengulangan(pengirim, session, targetDate) {
+async function lanjutKeTahapPesan(pengirim, session, targetDate) {
     session.waktuEksekusi = targetDate.getTime();
     session.konfirmasiWaktu = formatWaktuLengkap(targetDate);
-    session.step = 'WAITING_RECURRENCE';
+    session.step = 'WAITING_MESSAGE';
     delete session.pilihanWaktu;
 
     await sock.sendMessage(pengirim, {
-        text: `🗓️ Jadwal pertama diatur pada: *${session.konfirmasiWaktu}*\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n*4* = Ya, Setiap Bulan (Di tanggal yang sama)\n*5* = Ya, Setiap Tahun (Di tanggal dan bulan yang sama)\n\n_(Ketik *b* untuk membatalkan)_`
+        text: `🗓️ Waktu diatur pada: *${session.konfirmasiWaktu}*\n\nSekarang, apa pesan pengingat yang ingin disampaikan?\n_(Contoh: "Bayar SPP anak" atau ketik *b* untuk batal)_`
     });
 }
 
@@ -391,7 +391,7 @@ async function connectToWhatsApp() {
             if (session) session.terakhirAktif = waktuSekarang;
 
             if (session) {
-                // TAHAP 1: Bot sedang menunggu input Pesan
+                // TAHAP 2: Bot sedang menunggu input Pesan (Setelah Waktu ditangkap)
                 if (session.step === 'WAITING_MESSAGE') {
                     // Batasi panjang pesan maksimal 300 karakter untuk mencegah database bloat
                     if (userText.length > 300) {
@@ -400,19 +400,19 @@ async function connectToWhatsApp() {
                     }
 
                     session.pesan = userText;          
-                    session.step = 'WAITING_TIME';     
+                    session.step = 'WAITING_RECURRENCE';     
                     
                     await sock.sendMessage(pengirim, { 
-                        text: `Siap! Kapan saya harus mengingatkan:\n*"${userText}"*?\n\n(Balas dengan waktu kasual seperti *10 menit*, *besok 8 malam*, atau *15:30*)\n\n_💡 Bingung formatnya? Ketik *p* (panduan).\n❌ Ketik *b* (batal) jika tidak jadi._` 
+                        text: `🗓️ Jadwal: *${session.konfirmasiWaktu}*\n📝 Pesan: "${session.pesan}"\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n*4* = Ya, Setiap Bulan (Di tanggal yang sama)\n*5* = Ya, Setiap Tahun (Di tanggal dan bulan yang sama)\n\n_(Ketik *b* untuk membatalkan)_`
                     });
                     return;
                 }
                 
-                // TAHAP 2: Bot sedang menunggu input Waktu
+                // TAHAP 1: Bot sedang menunggu input Waktu
                 else if (session.step === 'WAITING_TIME') {
                     if (lowerText === 'panduan' || lowerText === 'p') {
                         await sock.sendMessage(pengirim, { 
-                            text: `💡 *Panduan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat jadwal baru\n• *j* (atau *jadwal*) : Lihat daftar jadwal\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Batal membuat jadwal\n• *p* (atau *panduan*) : Buka menu bantuan\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn Jam:Menit): *25/08/2026 09:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\nSilakan balas waktu untuk *" ${session.pesan} "* sekarang.\n_(Atau ketik *b* untuk batal)_` 
+                            text: `💡 *Panduan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat jadwal baru\n• *j* (atau *jadwal*) : Lihat daftar jadwal\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Batal membuat jadwal\n• *p* (atau *panduan*) : Buka menu bantuan\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn Jam:Menit): *25/08/2026 09:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\nSilakan balas waktu kapan Anda ingin diingatkan.\n_(Atau ketik *b* untuk batal)_` 
                         });
                         return; // Jangan hapus sesi, biarkan user balas lagi
                     }
@@ -449,12 +449,12 @@ async function connectToWhatsApp() {
                         return;
                     }
 
-                    // Pindah ke tahap 3: Pengulangan
-                    await lanjutKeTahapPengulangan(pengirim, session, targetDate);
+                    // Pindah ke tahap tanya Pesan
+                    await lanjutKeTahapPesan(pengirim, session, targetDate);
                     return;
                 }
 
-                // TAHAP 2b: User memilih salah satu tafsiran jam yang ambigu
+                // TAHAP 1b: User memilih salah satu tafsiran jam yang ambigu
                 else if (session.step === 'WAITING_TIME_CLARIFY') {
                     const pilihan = parseInt(userText, 10);
                     const kandidat = session.pilihanWaktu || [];
@@ -477,7 +477,7 @@ async function connectToWhatsApp() {
                         return;
                     }
 
-                    await lanjutKeTahapPengulangan(pengirim, session, terpilih);
+                    await lanjutKeTahapPesan(pengirim, session, terpilih);
                     return;
                 }
 
@@ -581,9 +581,9 @@ async function connectToWhatsApp() {
                     return;
                 }
 
-                userSessions.set(pengirim, { step: 'WAITING_MESSAGE', terakhirAktif: waktuSekarang });
+                userSessions.set(pengirim, { step: 'WAITING_TIME', terakhirAktif: waktuSekarang });
                 await sock.sendMessage(pengirim, { 
-                    text: `Halo Kak ${namaPengirim}, apa pesan pengingatnya?\n\n_(Balas dengan inti pesannya saja, contoh: "Bayar tagihan listrik". Ketik *b* untuk batal)_` 
+                    text: `Halo Kak ${namaPengirim}, kapan Anda ingin diingatkan?\n\n_(Balas dengan waktu kasual seperti *10 menit*, *besok 8 malam*, atau *15:30*. Ketik *b* untuk batal)_` 
                 });
             } 
             else if (lowerText === 'jadwal' || lowerText === 'list' || lowerText === 'j') {
@@ -778,9 +778,9 @@ async function connectToWhatsApp() {
                         }
                     } catch (error) {
                         console.error('Error AI Interceptor:', error);
-                        userSessions.set(pengirim, { step: 'WAITING_MESSAGE', terakhirAktif: waktuSekarang });
+                        userSessions.set(pengirim, { step: 'WAITING_TIME', terakhirAktif: waktuSekarang });
                         await sock.sendMessage(pengirim, { 
-                            text: `🧠 _Waduh, sistem cerdas saya sedang sibuk. Mari kita buat secara bertahap ya Kak._\n\nApa pesan pengingatnya?\n_(Balas dengan inti pesannya saja. Ketik *b* untuk batal)_` 
+                            text: `🧠 _Waduh, sistem cerdas saya sedang sibuk. Mari kita buat secara bertahap ya Kak._\n\nKapan Anda ingin diingatkan?\n_(Balas dengan waktu kasual seperti *10 menit*, *besok 8 malam*, atau *15:30*. Ketik *b* untuk batal)_` 
                         });
                     }
                 }
