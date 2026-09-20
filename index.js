@@ -653,7 +653,7 @@ async function connectToWhatsApp() {
                     text: `⚠️ *PERINGATAN!* ⚠️\n\nAnda yakin ingin menghapus akun Anda secara permanen?\n\nIni akan menghapus seluruh data jadwal Anda (aktif maupun yang sudah lewat) serta profil Anda dari sistem.\n\nBalas *y* untuk konfirmasi penghapusan akun, atau ketik *b* untuk membatalkan.` 
                 });
             }
-            else if (lowerText.startsWith('hapus ') || lowerText === 'hapus' || lowerText.startsWith('h ') || lowerText === 'h') {
+            else if (lowerText.startsWith('hapus ') || lowerText === 'hapus' || /^hapus\d+$/.test(lowerText) || lowerText.startsWith('h ') || lowerText === 'h' || /^h\d+$/.test(lowerText)) {
                 const arg = lowerText.startsWith('hapus') ? lowerText.slice(5).trim() : lowerText.slice(1).trim();
                 
                 const daftarJadwal = await db.all(
