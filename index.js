@@ -320,7 +320,7 @@ async function connectToWhatsApp() {
 
             // 2. Jika user belum ada atau belum registrasi (is_registered = 0)
             if (!user || user.is_registered === 0) {
-                if (text.toUpperCase().trim() === 'SUDAH') {
+                if (text.toUpperCase().trim() === 'SUDAH' || text.toUpperCase().trim() === 'S') {
                     if (!user) {
                         await db.run(`INSERT INTO users (nomor_wa, nama, is_registered, created_at) VALUES (?, ?, 1, ?)`, [pengirim, namaPengirim, waktuSekarang]);
                     } else {
