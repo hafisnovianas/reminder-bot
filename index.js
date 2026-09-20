@@ -594,7 +594,7 @@ async function connectToWhatsApp() {
 
                 if (daftarJadwal.length === 0) {
                     await sock.sendMessage(pengirim, { 
-                        text: `📝 *Tidak ada jadwal aktif.*\n\nSaat ini Anda tidak memiliki pengingat apa pun. Ketik *i* (atau *ingatkan*) untuk membuat jadwal baru.` 
+                        text: `📝 *Tidak ada jadwal aktif.*\n\nSaat ini Anda tidak memiliki pengingat apa pun.` 
                     });
                 } else {
                     let teksJadwal = `📋 *Daftar Pengingat Anda:*\n\n`;
@@ -614,7 +614,7 @@ async function connectToWhatsApp() {
                         teksJadwal += `${index + 1}. *${jadwal.pesan}*${labelUlang}\n   🗓️ ${waktu}\n\n`;
                     });
 
-                    teksJadwal += `_Ketik *i* (atau *ingatkan*) untuk menambah jadwal._\n_Ketik *h [nomor]* (atau *hapus [nomor]*) untuk membatalkan jadwal._`;
+                    teksJadwal += `_Ketik *h [nomor]* untuk membatalkan jadwal._`;
                     await sock.sendMessage(pengirim, { text: teksJadwal });
                 }
             }
