@@ -328,7 +328,7 @@ async function connectToWhatsApp() {
                     }
                     
                     await sock.sendMessage(pengirim, { 
-                        text: `✅ *Terima kasih ${namaPengirim}! Nomor Anda telah diverifikasi.*\n\nSekarang Anda bisa membuat pengingat baru cukup dengan mengetik:\n*i* (atau *ingatkan*)\n\n_💡 Ketik *p* (atau *panduan*) kapan saja untuk melihat buku panduan bot._` 
+                        text: `🎉 *Selamat bergabung, ${namaPengirim}!*\n\nNomor Anda telah terdaftar. Anda bisa membuat pengingat baru cukup dengan mengetik pesan Anda secara natural.\n\nContoh: _"Nanti malam jam 8 ingatkan saya minum obat"_\n\nKetik *p* atau *panduan* kapan saja untuk melihat fitur lengkapnya.` 
                     });
                     console.log(`👤 User baru terverifikasi: ${namaPengirim} (${pengirim})`);
                     return; 
@@ -728,7 +728,7 @@ async function connectToWhatsApp() {
             }
             else if (lowerText === 'panduan' || lowerText === 'p' || lowerText === '!help' || lowerText === 'halo' || lowerText === 'ping' || lowerText === '?') {
                 await sock.sendMessage(pengirim, { 
-                    text: `💡 *Pusat Bantuan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat pengingat baru\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\n_Ketik *i* (atau *ingatkan*) untuk mulai membuat jadwal._` 
+                    text: `💡 *Pusat Bantuan Bot Reminder*\n\nUntuk membuat jadwal, langsung saja ketik:\n_"Besok jam 7 pagi ingatkan saya bayar SPP"_\n\n*⌨️ Daftar Perintah Lainnya:*\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*` 
                 });
             }
             else {
@@ -778,7 +778,10 @@ async function connectToWhatsApp() {
                         }
                     } catch (error) {
                         console.error('Error AI Interceptor:', error);
-                        await sock.sendMessage(pengirim, { text: `⚠️ Maaf, sistem AI (Groq) sedang sibuk/gangguan. Silakan buat jadwal secara manual dengan mengetik *i*.` });
+                        userSessions.set(pengirim, { step: 'WAITING_MESSAGE', terakhirAktif: waktuSekarang });
+                        await sock.sendMessage(pengirim, { 
+                            text: `🧠 _Waduh, sistem cerdas saya sedang sibuk. Mari kita buat secara bertahap ya Kak._\n\nApa pesan pengingatnya?\n_(Balas dengan inti pesannya saja. Ketik *b* untuk batal)_` 
+                        });
                     }
                 }
             }
