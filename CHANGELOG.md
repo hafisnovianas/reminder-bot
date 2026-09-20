@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Fitur Hapus Akun**: Menambahkan perintah `ha` atau `hapus akun` yang memungkinkan pengguna untuk menghapus profil dan seluruh data jadwal mereka secara permanen dari database.
 - **AI Parser Integration**: Menambahkan dukungan `groq-sdk` dan model `openai/gpt-oss-20b` untuk memungkinkan pengguna membuat jadwal menggunakan bahasa natural (contoh: "besok jam 3 sore ingatkan minum obat").
 - **Auto-Fallback System**: Sistem *hybrid* cerdas yang akan secara otomatis mengalihkan pengguna ke metode pembuatan jadwal manual (tanya-jawab) apabila API Groq sedang *down* atau *rate limit*.
 

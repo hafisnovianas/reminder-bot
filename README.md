@@ -56,6 +56,7 @@ dengan nilai bawaan, kecuali auto-backup yang butuh `ADMIN_WA`.
 | `j` / `jadwal` | Lihat daftar pengingat aktif |
 | `h 1` / `hapus 1` | Hapus jadwal nomor 1 |
 | `hs` / `hapus semua` | Hapus semua jadwal (dengan konfirmasi) |
+| `ha` / `hapus akun` | Hapus akun dan data Anda secara permanen |
 | `saran` / `lapor` | Kirim masukan atau laporan bug |
 | `b` / `batal` | Batalkan aksi yang sedang berjalan |
 | `p` / `panduan` | Buka bantuan |

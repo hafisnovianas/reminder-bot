@@ -533,6 +533,22 @@ async function connectToWhatsApp() {
                     return;
                 }
 
+                // TAHAP KONFIRMASI HAPUS AKUN
+                else if (session.step === 'WAITING_DELETE_ACCOUNT') {
+                    if (lowerText === 'ya' || lowerText === 'y' || lowerText === 's') {
+                        await db.run(`DELETE FROM reminders WHERE nomor_wa = ?`, [pengirim]);
+                        await db.run(`DELETE FROM feedbacks WHERE nomor_wa = ?`, [pengirim]);
+                        await db.run(`DELETE FROM users WHERE nomor_wa = ?`, [pengirim]);
+                        
+                        await sock.sendMessage(pengirim, { text: `✅ Akun dan seluruh data Anda (termasuk jadwal) telah berhasil dihapus dari sistem kami.\n\nKapan pun Anda butuh bot ini lagi, cukup balas pesan ini dengan sapaan.` });
+                    } else {
+                        await sock.sendMessage(pengirim, { text: `✅ Penghapusan akun dibatalkan.` });
+                    }
+                    
+                    userSessions.delete(pengirim);
+                    return;
+                }
+
                 // TAHAP MENUNGGU INPUT SARAN/LAPORAN
                 else if (session.step === 'WAITING_FEEDBACK') {
                     if (userText.length > 500) {
@@ -629,6 +645,12 @@ async function connectToWhatsApp() {
                 userSessions.set(pengirim, { step: 'WAITING_DELETE_ALL', terakhirAktif: waktuSekarang });
                 await sock.sendMessage(pengirim, { 
                     text: `⚠️ Anda yakin ingin menghapus *${check.count} jadwal aktif*?\n\nBalas *y* untuk konfirmasi, atau ketik *b* untuk membatalkan.` 
+                });
+            }
+            else if (lowerText === 'hapus akun' || lowerText === 'ha') {
+                userSessions.set(pengirim, { step: 'WAITING_DELETE_ACCOUNT', terakhirAktif: waktuSekarang });
+                await sock.sendMessage(pengirim, { 
+                    text: `⚠️ *PERINGATAN!* ⚠️\n\nAnda yakin ingin menghapus akun Anda secara permanen?\n\nIni akan menghapus seluruh data jadwal Anda (aktif maupun yang sudah lewat) serta profil Anda dari sistem.\n\nBalas *y* untuk konfirmasi penghapusan akun, atau ketik *b* untuk membatalkan.` 
                 });
             }
             else if (lowerText.startsWith('hapus ') || lowerText === 'hapus' || lowerText.startsWith('h ') || lowerText === 'h') {
@@ -728,7 +750,7 @@ async function connectToWhatsApp() {
             }
             else if (lowerText === 'panduan' || lowerText === 'p' || lowerText === '!help' || lowerText === 'halo' || lowerText === 'ping' || lowerText === '?') {
                 await sock.sendMessage(pengirim, { 
-                    text: `💡 *Pusat Bantuan Bot Reminder*\n\nUntuk membuat jadwal, langsung saja ketik:\n_"Besok jam 7 pagi ingatkan saya bayar SPP"_\n\n*⌨️ Daftar Perintah Lainnya:*\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*` 
+                    text: `💡 *Pusat Bantuan Bot Reminder*\n\nUntuk membuat jadwal, langsung saja ketik:\n_"Besok jam 7 pagi ingatkan saya bayar SPP"_\n\n*⌨️ Daftar Perintah Lainnya:*\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *ha* (atau *hapus akun*) : Hapus akun dan data Anda\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*` 
                 });
             }
             else {
