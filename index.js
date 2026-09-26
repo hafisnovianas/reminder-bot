@@ -308,10 +308,18 @@ async function connectToWhatsApp() {
             const mentionedJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
             const isMentioned = mentionedJid.includes(botJid);
             
+            // DEBUG LOGGING UNTUK GRUP
+            console.log(`[DEBUG GROUP] Pengirim: ${peserta}, BotJID: ${botJid}, isMentioned: ${isMentioned}`);
+            console.log(`[DEBUG GROUP] Mentioned array:`, mentionedJid);
+            console.log(`[DEBUG GROUP] Teks asli: "${text}"`);
+            
             if (!isMentioned) return;
             
-            // Bersihkan teks dari tag
-            text = text.replace(new RegExp(`@${botJid.split('@')[0]}`, 'g'), '').trim();
+            // Bersihkan teks dari pola tag: bisa berupa @nomor atau @nama kontak yang ditag
+            // WhatsApp Web kadang mengirimkan text "@628123" atau "@Bot Reminder"
+            text = text.replace(/@[^\s]+/g, '').trim(); // Menghapus semua kata yang berawalan @
+            
+            console.log(`[DEBUG GROUP] Teks setelah dibersihkan: "${text}"`);
             if (!text) return;
         }
 
