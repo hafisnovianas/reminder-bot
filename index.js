@@ -312,6 +312,7 @@ async function connectToWhatsApp() {
             console.log(`[DEBUG GROUP] Pengirim: ${peserta}, BotJID: ${botJid}, isMentioned: ${isMentioned}`);
             console.log(`[DEBUG GROUP] Mentioned array:`, mentionedJid);
             console.log(`[DEBUG GROUP] Teks asli: "${text}"`);
+            console.log(`[DEBUG GROUP] Info Bot (sock.user):`, sock.user);
             
             if (!isMentioned) return;
             
