@@ -287,7 +287,8 @@ async function connectToWhatsApp() {
         // pengirim = target kirim balasan (bisa ID Grup atau Nomor WA)
         const pengirim = msg.key.remoteJidAlt || msg.key.remoteJid;
         const peserta = isGroup ? msg.key.participant : pengirim;
-        const botJid = sock.user.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : '';
+        const botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : '';
+        const botLid = sock.user?.lid ? sock.user.lid.split(':')[0] + '@lid' : '';
 
         // Helper pengiriman pesan yang otomatis men-tag peserta jika di grup
         const kirimBalasan = async (content) => {
@@ -306,21 +307,12 @@ async function connectToWhatsApp() {
         // Di grup, bot harus dipanggil secara spesifik (mention)
         if (isGroup) {
             const mentionedJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-            const isMentioned = mentionedJid.includes(botJid);
-            
-            // DEBUG LOGGING UNTUK GRUP
-            console.log(`[DEBUG GROUP] Pengirim: ${peserta}, BotJID: ${botJid}, isMentioned: ${isMentioned}`);
-            console.log(`[DEBUG GROUP] Mentioned array:`, mentionedJid);
-            console.log(`[DEBUG GROUP] Teks asli: "${text}"`);
-            console.log(`[DEBUG GROUP] Info Bot (sock.user):`, sock.user);
+            const isMentioned = mentionedJid.includes(botJid) || (botLid && mentionedJid.includes(botLid));
             
             if (!isMentioned) return;
             
-            // Bersihkan teks dari pola tag: bisa berupa @nomor atau @nama kontak yang ditag
-            // WhatsApp Web kadang mengirimkan text "@628123" atau "@Bot Reminder"
-            text = text.replace(/@[^\s]+/g, '').trim(); // Menghapus semua kata yang berawalan @
-            
-            console.log(`[DEBUG GROUP] Teks setelah dibersihkan: "${text}"`);
+            // Bersihkan teks dari pola tag: bisa berupa @nomor, @nama, atau @lid
+            text = text.replace(/@[^\s]+/g, '').trim(); 
             if (!text) return;
         }
 
