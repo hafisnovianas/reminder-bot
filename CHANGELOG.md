@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Dukungan WhatsApp Group**: Membuka akses bot untuk grup. Bot kini akan merespons apabila di-tag/mention (`@BotReminder`). Pembuatan jadwal di grup langsung diarahkan secara *one-shot* ke AI (tanpa State Machine) untuk mencegah *spamming*.
+- **Sistem Keamanan Grup**: Memperbarui deteksi *Anti-Spam* berbasis ID peserta (bukan ID grup). Mengimplementasikan sistem otorisasi di mana hanya pembuat jadwal yang bisa menghapus jadwalnya sendiri di dalam grup.
 - **Fitur Hapus Akun**: Menambahkan perintah `ha` atau `hapus akun` yang memungkinkan pengguna untuk menghapus profil dan seluruh data jadwal mereka secara permanen dari database.
 - **AI Parser Integration**: Menambahkan dukungan `groq-sdk` dan model `openai/gpt-oss-20b` untuk memungkinkan pengguna membuat jadwal menggunakan bahasa natural (contoh: "besok jam 3 sore ingatkan minum obat").
 - **Auto-Fallback System**: Sistem *hybrid* cerdas yang akan secara otomatis mengalihkan pengguna ke metode pembuatan jadwal manual (tanya-jawab) apabila API Groq sedang *down* atau *rate limit*.
