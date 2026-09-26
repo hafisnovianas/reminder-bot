@@ -89,7 +89,7 @@ async function lanjutKeTahapPesan(pengirim, session, targetDate) {
     session.step = 'WAITING_MESSAGE';
     delete session.pilihanWaktu;
 
-    await sock.sendMessage(pengirim, {
+    await kirimBalasan({
         text: `🗓️ Waktu diatur pada: *${session.konfirmasiWaktu}*\n\nSekarang, apa pesan pengingat yang ingin disampaikan?\n_(Contoh: "Bayar SPP anak" atau ketik *b* untuk batal)_`
     });
 }
@@ -144,6 +144,11 @@ async function initDatabase() {
     // Tambahkan kolom snooze_count untuk Auto-Snooze
     try {
         await db.exec(`ALTER TABLE reminders ADD COLUMN snooze_count INTEGER DEFAULT 0`);
+    } catch (e) {}
+
+    // Tambahkan kolom pembuat_jid untuk kebutuhan fitur Grup
+    try {
+        await db.exec(`ALTER TABLE reminders ADD COLUMN pembuat_jid TEXT`);
     } catch (e) {}
 
     // Index untuk dua query yang paling sering jalan: cron tiap menit mencari
@@ -270,56 +275,79 @@ async function connectToWhatsApp() {
 
         const asalChat = msg.key.remoteJid || '';
 
-        // Bot ini dirancang untuk percakapan pribadi satu lawan satu.
-        // Tanpa filter ini bot ikut menyahut di grup dan mengirim kartu kontak
-        // ke sana, serta membalas setiap update status yang lewat.
+        // Abaikan pesan dari status, broadcast, dan channel
         if (
-            asalChat.endsWith('@g.us') ||          // grup
             asalChat.endsWith('@broadcast') ||     // termasuk status@broadcast
             asalChat.endsWith('@newsletter')       // channel
         ) return;
 
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+        const isGroup = asalChat.endsWith('@g.us');
+        let text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+        
+        // pengirim = target kirim balasan (bisa ID Grup atau Nomor WA)
         const pengirim = msg.key.remoteJidAlt || msg.key.remoteJid;
+        const peserta = isGroup ? msg.key.participant : pengirim;
+        const botJid = sock.user.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : '';
+
+        // Helper pengiriman pesan yang otomatis men-tag peserta jika di grup
+        const kirimBalasan = async (content) => {
+            if (isGroup && content.text) {
+                content.text = `@${peserta.split('@')[0]}\n${content.text}`;
+                content.mentions = [peserta];
+            }
+            return await sock.sendMessage(pengirim, content);
+        };
 
         // 🌟 MENGAMBIL NAMA PENGIRIM DARI PROFIL WA MEREKA
         const namaPengirim = msg.pushName || 'Kak'; 
 
         if (!text) return;
 
+        // Di grup, bot harus dipanggil secara spesifik (mention)
+        if (isGroup) {
+            const mentionedJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            const isMentioned = mentionedJid.includes(botJid);
+            
+            if (!isMentioned) return;
+            
+            // Bersihkan teks dari tag
+            text = text.replace(new RegExp(`@${botJid.split('@')[0]}`, 'g'), '').trim();
+            if (!text) return;
+        }
+
         const waktuSekarang = new Date().getTime();
 
         // ==========================================
         // 🛡️ FITUR ANTI-SPAM (RATE LIMITING)
         // ==========================================
-        if (!rateLimitMap.has(pengirim)) {
-            rateLimitMap.set(pengirim, { count: 1, firstMessageTime: waktuSekarang, warned: false });
+        if (!rateLimitMap.has(peserta)) {
+            rateLimitMap.set(peserta, { count: 1, firstMessageTime: waktuSekarang, warned: false });
         } else {
-            const userSpamData = rateLimitMap.get(pengirim);
+            const userSpamData = rateLimitMap.get(peserta);
             if (waktuSekarang - userSpamData.firstMessageTime < SPAM_WINDOW_MS) {
                 userSpamData.count += 1;
                 if (userSpamData.count > SPAM_THRESHOLD) {
                     if (!userSpamData.warned) {
                         userSpamData.warned = true;
                         try {
-                            await sock.sendMessage(pengirim, { text: `⚠️ *Sistem Anti-Spam Aktif*\nAnda mengirim terlalu banyak pesan dalam waktu singkat. Bot akan mengabaikan pesan Anda sementara. Harap tunggu beberapa saat.` });
+                            await kirimBalasan({ text: `⚠️ *Sistem Anti-Spam Aktif*\nAnda mengirim terlalu banyak pesan dalam waktu singkat. Bot akan mengabaikan pesan Anda sementara. Harap tunggu beberapa saat.` });
                         } catch (e) { console.log('Gagal mengirim peringatan spam'); }
                     }
                     return; // Hentikan eksekusi, abaikan pesan user ini
                 }
             } else {
                 // Reset karena sudah lewat window time
-                rateLimitMap.set(pengirim, { count: 1, firstMessageTime: waktuSekarang, warned: false });
+                rateLimitMap.set(peserta, { count: 1, firstMessageTime: waktuSekarang, warned: false });
             }
         }
         // ==========================================
 
         try {
             // 1. Cek apakah user sudah terdaftar di tabel users
-            const user = await db.get(`SELECT * FROM users WHERE nomor_wa = ?`, [pengirim]);
+            const user = await db.get(`SELECT * FROM users WHERE nomor_wa = ?`, [peserta]);
 
-            // 2. Jika user belum ada atau belum registrasi (is_registered = 0)
-            if (!user || user.is_registered === 0) {
+            // 2. Di grup, kita lewati paksaan registrasi VCard ini agar tidak spam
+            if (!isGroup && (!user || user.is_registered === 0)) {
                 if (text.toUpperCase().trim() === 'SUDAH' || text.toUpperCase().trim() === 'S') {
                     if (!user) {
                         await db.run(`INSERT INTO users (nomor_wa, nama, is_registered, created_at) VALUES (?, ?, 1, ?)`, [pengirim, namaPengirim, waktuSekarang]);
@@ -327,7 +355,7 @@ async function connectToWhatsApp() {
                         await db.run(`UPDATE users SET is_registered = 1, nama = ? WHERE nomor_wa = ?`, [namaPengirim, pengirim]);
                     }
                     
-                    await sock.sendMessage(pengirim, { 
+                    await kirimBalasan({ 
                         text: `🎉 *Selamat bergabung, ${namaPengirim}!*\n\nNomor Anda telah terdaftar. Anda bisa membuat pengingat baru cukup dengan mengetik pesan Anda secara natural.\n\nContoh: _"Nanti malam jam 8 ingatkan saya minum obat"_\n\nKetik *p* atau *panduan* kapan saja untuk melihat fitur lengkapnya.` 
                     });
                     console.log(`👤 User baru terverifikasi: ${namaPengirim} (${pengirim})`);
@@ -343,11 +371,11 @@ async function connectToWhatsApp() {
                                 + `TEL;type=CELL;type=VOICE;waid=${botNumber}:+${botNumber}\n` 
                                 + 'END:VCARD';
 
-                    await sock.sendMessage(pengirim, {
+                    await kirimBalasan({
                         text: `👋 *Halo ${namaPengirim}! Saya adalah Bot Pengingat (Reminder).*\n\nAgar pesan pengingat nantinya tidak telat atau masuk ke folder SPAM oleh sistem WhatsApp, silakan *Simpan Kartu Kontak* di bawah ini terlebih dahulu.\n\nJika sudah disimpan, balas pesan ini dengan mengetik *SUDAH* (atau cukup balas huruf *s*).`
                     });
 
-                    await sock.sendMessage(pengirim, {
+                    await kirimBalasan({
                         contacts: {
                             displayName: 'Bot Reminder',
                             contacts: [{ vcard }]
@@ -368,13 +396,14 @@ async function connectToWhatsApp() {
             if (lowerText === 'batal' || lowerText === 'b' || lowerText === '0') {
                 if (userSessions.has(pengirim)) {
                     userSessions.delete(pengirim);
-                    await sock.sendMessage(pengirim, { text: `✅ Aksi telah dibatalkan.` });
+                    await kirimBalasan({ text: `✅ Aksi telah dibatalkan.` });
                 }
                 return;
             }
 
             // 2. CEK STATUS ALUR PERCAKAPAN SAAT INI
-            let session = userSessions.get(pengirim);
+            // Di grup kita tidak pakai sistem sesi tanya jawab ini
+            let session = isGroup ? undefined : userSessions.get(peserta);
 
             // Sesi yang ditinggalkan user akan dilupakan. Tanpa ini, orang yang
             // mengetik *i* lalu pergi akan tersangkut di langkah itu selamanya:
@@ -382,7 +411,7 @@ async function connectToWhatsApp() {
             if (session && waktuSekarang - (session.terakhirAktif || 0) > SESI_KEDALUWARSA_MS) {
                 userSessions.delete(pengirim);
                 session = undefined;
-                await sock.sendMessage(pengirim, {
+                await kirimBalasan({
                     text: `⏳ Sesi sebelumnya sudah kedaluwarsa karena terlalu lama tidak dilanjutkan.\n\nKetik *i* (atau *ingatkan*) untuk memulai lagi dari awal.`
                 });
                 return;
@@ -395,14 +424,14 @@ async function connectToWhatsApp() {
                 if (session.step === 'WAITING_MESSAGE') {
                     // Batasi panjang pesan maksimal 300 karakter untuk mencegah database bloat
                     if (userText.length > 300) {
-                        await sock.sendMessage(pengirim, { text: `⚠️ *Pesan Terlalu Panjang!*\nMaksimal pesan adalah 300 karakter. Pesan Anda mengandung ${userText.length} karakter.\n\nSilakan ketik ulang pesannya dengan lebih singkat. _(Ketik *b* untuk batal)_` });
+                        await kirimBalasan({ text: `⚠️ *Pesan Terlalu Panjang!*\nMaksimal pesan adalah 300 karakter. Pesan Anda mengandung ${userText.length} karakter.\n\nSilakan ketik ulang pesannya dengan lebih singkat. _(Ketik *b* untuk batal)_` });
                         return;
                     }
 
                     session.pesan = userText;          
                     session.step = 'WAITING_RECURRENCE';     
                     
-                    await sock.sendMessage(pengirim, { 
+                    await kirimBalasan({ 
                         text: `🗓️ Jadwal: *${session.konfirmasiWaktu}*\n📝 Pesan: "${session.pesan}"\n\nApakah pengingat ini perlu diulang rutin?\nBalas dengan angka:\n*1* = Tidak (Hanya sekali)\n*2* = Ya, Setiap Hari\n*3* = Ya, Setiap Minggu (Di hari yang sama)\n*4* = Ya, Setiap Bulan (Di tanggal yang sama)\n*5* = Ya, Setiap Tahun (Di tanggal dan bulan yang sama)\n\n_(Ketik *b* untuk membatalkan)_`
                     });
                     return;
@@ -411,7 +440,7 @@ async function connectToWhatsApp() {
                 // TAHAP 1: Bot sedang menunggu input Waktu
                 else if (session.step === 'WAITING_TIME') {
                     if (lowerText === 'panduan' || lowerText === 'p') {
-                        await sock.sendMessage(pengirim, { 
+                        await kirimBalasan({ 
                             text: `💡 *Panduan Bot Reminder*\n\n*⌨️ Daftar Perintah Cepat:*\n• *i* (atau *ingatkan*) : Buat jadwal baru\n• *j* (atau *jadwal*) : Lihat daftar jadwal\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Batal membuat jadwal\n• *p* (atau *panduan*) : Buka menu bantuan\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn Jam:Menit): *25/08/2026 09:00*\n\n_Santai saja, kalimat biasa juga dimengerti — contoh: "buat besok pagi jam 7"._\n\nSilakan balas waktu kapan Anda ingin diingatkan.\n_(Atau ketik *b* untuk batal)_` 
                         });
                         return; // Jangan hapus sesi, biarkan user balas lagi
@@ -420,7 +449,7 @@ async function connectToWhatsApp() {
                     const hasilWaktu = parseSmartTime(userText);
 
                     if (!hasilWaktu) {
-                        await sock.sendMessage(pengirim, {
+                        await kirimBalasan({
                             text: `❌ *Format waktu tidak dikenali!*\n\nKetik *p* (atau *panduan*) untuk melihat contoh pengetikan yang benar, atau ketik *b* (atau *batal*) untuk membatalkan.`
                         });
                         return;
@@ -436,7 +465,7 @@ async function connectToWhatsApp() {
                             .map((d, i) => `*${i + 1}* = ${formatWaktuRingkas(d)}`)
                             .join('\n');
 
-                        await sock.sendMessage(pengirim, {
+                        await kirimBalasan({
                             text: `🕐 *"${userText}"* bisa berarti dua waktu. Maksud Anda yang mana?\n\n${daftar}\n\n_(Balas dengan angkanya. Lain kali bisa langsung tulis *jam 7 pagi* atau *19:00* agar tidak ditanya lagi.)_\n❌ Ketik *b* untuk batal.`
                         });
                         return;
@@ -445,7 +474,7 @@ async function connectToWhatsApp() {
                     const targetDate = hasilWaktu.date;
 
                     if (targetDate.getTime() <= waktuSekarang) {
-                        await sock.sendMessage(pengirim, { text: `❌ *Waktu sudah berlalu!* Masukkan waktu di masa depan.\n_(Atau ketik *b* untuk batal)_` });
+                        await kirimBalasan({ text: `❌ *Waktu sudah berlalu!* Masukkan waktu di masa depan.\n_(Atau ketik *b* untuk batal)_` });
                         return;
                     }
 
@@ -464,7 +493,7 @@ async function connectToWhatsApp() {
                             .map((ts, i) => `*${i + 1}* = ${formatWaktuRingkas(new Date(ts))}`)
                             .join('\n');
 
-                        await sock.sendMessage(pengirim, {
+                        await kirimBalasan({
                             text: `❌ Balas dengan angka pilihannya saja.\n\n${daftar}\n\n_(Atau ketik *b* untuk batal)_`
                         });
                         return;
@@ -473,7 +502,7 @@ async function connectToWhatsApp() {
                     const terpilih = new Date(kandidat[pilihan - 1]);
 
                     if (terpilih.getTime() <= waktuSekarang) {
-                        await sock.sendMessage(pengirim, { text: `❌ *Waktu sudah berlalu!* Masukkan waktu di masa depan.\n_(Atau ketik *b* untuk batal)_` });
+                        await kirimBalasan({ text: `❌ *Waktu sudah berlalu!* Masukkan waktu di masa depan.\n_(Atau ketik *b* untuk batal)_` });
                         return;
                     }
 
@@ -501,7 +530,7 @@ async function connectToWhatsApp() {
                         tipePengulangan = 'tahunan';
                         labelPengulangan = '🔄 Setiap Tahun';
                     } else {
-                        await sock.sendMessage(pengirim, { text: `❌ Pilihan tidak valid. Silakan balas dengan angka *1, 2, 3, 4, atau 5*.\n_(Atau ketik *b* untuk batal)_` });
+                        await kirimBalasan({ text: `❌ Pilihan tidak valid. Silakan balas dengan angka *1, 2, 3, 4, atau 5*.\n_(Atau ketik *b* untuk batal)_` });
                         return;
                     }
 
@@ -511,7 +540,7 @@ async function connectToWhatsApp() {
                         [pengirim, session.pesan, session.waktuEksekusi, 'pending', waktuSekarang, tipePengulangan]
                     );
 
-                    await sock.sendMessage(pengirim, { 
+                    await kirimBalasan({ 
                         text: `✅ *Jadwal tersimpan!*\n\nSaya akan mengingatkan:\n📝 "${session.pesan}"\n🗓️ Mulai: ${session.konfirmasiWaktu}\n🔁 Siklus: ${labelPengulangan}\n\n_Ketik *j* (atau *jadwal*) untuk melihat semua jadwal Anda._` 
                     });
                     
@@ -524,9 +553,9 @@ async function connectToWhatsApp() {
                 else if (session.step === 'WAITING_DELETE_ALL') {
                     if (lowerText === 'ya' || lowerText === 'y' || lowerText === 's') {
                         await db.run(`DELETE FROM reminders WHERE nomor_wa = ? AND status = 'pending'`, [pengirim]);
-                        await sock.sendMessage(pengirim, { text: `✅ Semua jadwal aktif Anda berhasil dihapus bersih!` });
+                        await kirimBalasan({ text: `✅ Semua jadwal aktif Anda berhasil dihapus bersih!` });
                     } else {
-                        await sock.sendMessage(pengirim, { text: `✅ Penghapusan massal dibatalkan.` });
+                        await kirimBalasan({ text: `✅ Penghapusan massal dibatalkan.` });
                     }
                     
                     userSessions.delete(pengirim);
@@ -540,9 +569,9 @@ async function connectToWhatsApp() {
                         await db.run(`DELETE FROM feedbacks WHERE nomor_wa = ?`, [pengirim]);
                         await db.run(`DELETE FROM users WHERE nomor_wa = ?`, [pengirim]);
                         
-                        await sock.sendMessage(pengirim, { text: `✅ Akun dan seluruh data Anda (termasuk jadwal) telah berhasil dihapus dari sistem kami.\n\nKapan pun Anda butuh bot ini lagi, cukup balas pesan ini dengan sapaan.` });
+                        await kirimBalasan({ text: `✅ Akun dan seluruh data Anda (termasuk jadwal) telah berhasil dihapus dari sistem kami.\n\nKapan pun Anda butuh bot ini lagi, cukup balas pesan ini dengan sapaan.` });
                     } else {
-                        await sock.sendMessage(pengirim, { text: `✅ Penghapusan akun dibatalkan.` });
+                        await kirimBalasan({ text: `✅ Penghapusan akun dibatalkan.` });
                     }
                     
                     userSessions.delete(pengirim);
@@ -552,7 +581,7 @@ async function connectToWhatsApp() {
                 // TAHAP MENUNGGU INPUT SARAN/LAPORAN
                 else if (session.step === 'WAITING_FEEDBACK') {
                     if (userText.length > 500) {
-                        await sock.sendMessage(pengirim, { text: `⚠️ *Masukan Terlalu Panjang!*\nMaksimal masukan adalah 500 karakter. Silakan ketik ulang masukan Anda dengan lebih ringkas. _(Ketik *b* untuk batal)_` });
+                        await kirimBalasan({ text: `⚠️ *Masukan Terlalu Panjang!*\nMaksimal masukan adalah 500 karakter. Silakan ketik ulang masukan Anda dengan lebih ringkas. _(Ketik *b* untuk batal)_` });
                         return;
                     }
 
@@ -562,7 +591,7 @@ async function connectToWhatsApp() {
                         [pengirim, namaPengirim, userText, waktuSekarang]
                     );
 
-                    await sock.sendMessage(pengirim, { 
+                    await kirimBalasan({ 
                         text: `✅ *Terima kasih atas masukannya!*\n\nSaran atau laporan Anda telah tersimpan dan sangat berharga untuk pengembangan bot ini ke depannya.` 
                     });
                     
@@ -580,7 +609,7 @@ async function connectToWhatsApp() {
                 );
                 
                 if (updated.changes > 0) {
-                    await sock.sendMessage(pengirim, {
+                    await kirimBalasan({
                         text: `✅ *Pengingat dihentikan.* Terima kasih!`
                     });
                     return;
@@ -589,31 +618,31 @@ async function connectToWhatsApp() {
             }
 
             // 4. JIKA TIDAK ADA ALUR AKTIF (MULAI BARU)
-            if (lowerText === 'ingatkan' || lowerText === 'i') {
+            if (!isGroup && (lowerText === 'ingatkan' || lowerText === 'i')) {
                 // Cek jumlah jadwal aktif (pending), batasi maksimal 50 agar tidak membebani sistem
                 const checkCount = await db.get(`SELECT COUNT(id) as count FROM reminders WHERE nomor_wa = ? AND status = 'pending'`, [pengirim]);
                 if (checkCount && checkCount.count >= MAX_REMINDER_PER_USER) {
-                    await sock.sendMessage(pengirim, { text: `⚠️ *Batas Maksimal Pengingat Tercapai!*\nAnda sudah memiliki ${MAX_REMINDER_PER_USER} jadwal aktif. Silakan hapus beberapa jadwal yang sudah tidak relevan dengan mengetik *j* lalu *h [nomor]* sebelum membuat yang baru.` });
+                    await kirimBalasan({ text: `⚠️ *Batas Maksimal Pengingat Tercapai!*\nAnda sudah memiliki ${MAX_REMINDER_PER_USER} jadwal aktif. Silakan hapus beberapa jadwal yang sudah tidak relevan dengan mengetik *j* lalu *h [nomor]* sebelum membuat yang baru.` });
                     return;
                 }
 
                 userSessions.set(pengirim, { step: 'WAITING_TIME', terakhirAktif: waktuSekarang });
-                await sock.sendMessage(pengirim, { 
+                await kirimBalasan({ 
                     text: `Halo Kak ${namaPengirim}, kapan Anda ingin diingatkan?\n\n_(Balas dengan waktu kasual seperti *10 menit*, *besok 8 malam*, atau *15:30*. Ketik *b* untuk batal)_` 
                 });
             } 
             else if (lowerText === 'jadwal' || lowerText === 'list' || lowerText === 'j') {
                 const daftarJadwal = await db.all(
-                    `SELECT pesan, waktu_eksekusi, tipe_pengulangan FROM reminders WHERE nomor_wa = ? AND status = 'pending' ORDER BY waktu_eksekusi ASC`, 
+                    `SELECT pesan, waktu_eksekusi, tipe_pengulangan, pembuat_jid FROM reminders WHERE nomor_wa = ? AND status = 'pending' ORDER BY waktu_eksekusi ASC`, 
                     [pengirim]
                 );
 
                 if (daftarJadwal.length === 0) {
-                    await sock.sendMessage(pengirim, { 
-                        text: `📝 *Tidak ada jadwal aktif.*\n\nSaat ini Anda tidak memiliki pengingat apa pun.` 
+                    await kirimBalasan({ 
+                        text: `📝 *Tidak ada jadwal aktif.*\n\nSaat ini tidak ada pengingat apa pun di sini.` 
                     });
                 } else {
-                    let teksJadwal = `📋 *Daftar Pengingat Anda:*\n\n`;
+                    let teksJadwal = `📋 *Daftar Pengingat:*\n\n`;
                     
                     daftarJadwal.forEach((jadwal, index) => {
                         const waktu = new Date(jadwal.waktu_eksekusi).toLocaleString('id-ID', { 
@@ -627,29 +656,32 @@ async function connectToWhatsApp() {
                         if (jadwal.tipe_pengulangan === 'bulanan') labelUlang = ' (🔄 Tiap Bulan)';
                         if (jadwal.tipe_pengulangan === 'tahunan') labelUlang = ' (🔄 Tiap Tahun)';
                         
-                        teksJadwal += `${index + 1}. *${jadwal.pesan}*${labelUlang}\n   🗓️ ${waktu}\n\n`;
+                        let pembuatText = isGroup ? `\n   👤 Pembuat: @${(jadwal.pembuat_jid||'').split('@')[0]}` : '';
+                        teksJadwal += `${index + 1}. *${jadwal.pesan}*${labelUlang}\n   🗓️ ${waktu}${pembuatText}\n\n`;
                     });
 
                     teksJadwal += `_Ketik *h [nomor]* untuk membatalkan jadwal._`;
-                    await sock.sendMessage(pengirim, { text: teksJadwal });
+                    await kirimBalasan({ text: teksJadwal });
                 }
             }
             else if (lowerText === 'hapus semua' || lowerText === 'hs') {
+                if (isGroup) return await kirimBalasan({ text: `❌ Perintah ini tidak diizinkan di dalam grup.` });
                 const check = await db.get(`SELECT COUNT(id) as count FROM reminders WHERE nomor_wa = ? AND status = 'pending'`, [pengirim]);
                 
                 if (check.count === 0) {
-                    await sock.sendMessage(pengirim, { text: `📝 Anda tidak memiliki jadwal aktif untuk dihapus.` });
+                    await kirimBalasan({ text: `📝 Anda tidak memiliki jadwal aktif untuk dihapus.` });
                     return;
                 }
 
                 userSessions.set(pengirim, { step: 'WAITING_DELETE_ALL', terakhirAktif: waktuSekarang });
-                await sock.sendMessage(pengirim, { 
+                await kirimBalasan({ 
                     text: `⚠️ Anda yakin ingin menghapus *${check.count} jadwal aktif*?\n\nBalas *y* untuk konfirmasi, atau ketik *b* untuk membatalkan.` 
                 });
             }
             else if (lowerText === 'hapus akun' || lowerText === 'ha') {
+                if (isGroup) return await kirimBalasan({ text: `❌ Perintah ini tidak diizinkan di dalam grup.` });
                 userSessions.set(pengirim, { step: 'WAITING_DELETE_ACCOUNT', terakhirAktif: waktuSekarang });
-                await sock.sendMessage(pengirim, { 
+                await kirimBalasan({ 
                     text: `⚠️ *PERINGATAN!* ⚠️\n\nAnda yakin ingin menghapus akun Anda secara permanen?\n\nIni akan menghapus seluruh data jadwal Anda (aktif maupun yang sudah lewat) serta profil Anda dari sistem.\n\nBalas *y* untuk konfirmasi penghapusan akun, atau ketik *b* untuk membatalkan.` 
                 });
             }
@@ -657,12 +689,12 @@ async function connectToWhatsApp() {
                 const arg = lowerText.startsWith('hapus') ? lowerText.slice(5).trim() : lowerText.slice(1).trim();
                 
                 const daftarJadwal = await db.all(
-                    `SELECT id, pesan, waktu_eksekusi, tipe_pengulangan FROM reminders WHERE nomor_wa = ? AND status = 'pending' ORDER BY waktu_eksekusi ASC`, 
+                    `SELECT id, pesan, waktu_eksekusi, tipe_pengulangan, pembuat_jid FROM reminders WHERE nomor_wa = ? AND status = 'pending' ORDER BY waktu_eksekusi ASC`, 
                     [pengirim]
                 );
 
                 if (daftarJadwal.length === 0) {
-                    await sock.sendMessage(pengirim, { text: `📝 Anda tidak memiliki jadwal aktif untuk dihapus.` });
+                    await kirimBalasan({ text: `📝 Anda tidak memiliki jadwal aktif untuk dihapus.` });
                     return;
                 }
 
@@ -685,36 +717,41 @@ async function connectToWhatsApp() {
                     });
 
                     teksJadwal += `💡 *Cara menghapus:*\nBalas pesan ini dengan mengetik *h [nomor]* (contoh: *h 1*)\nAtau ketik *hs* (atau *hapus semua*) untuk hapus semua.`;
-                    await sock.sendMessage(pengirim, { text: teksJadwal });
+                    await kirimBalasan({ text: teksJadwal });
                     return;
                 }
 
                 const nomorUrut = parseInt(arg);
                 
                 if (isNaN(nomorUrut)) {
-                    await sock.sendMessage(pengirim, { text: `❌ Format salah. Nomor jadwal harus berupa angka.\nContoh: *h 2*` });
+                    await kirimBalasan({ text: `❌ Format salah. Nomor jadwal harus berupa angka.\nContoh: *h 2*` });
                     return;
                 }
 
                 if (nomorUrut < 1 || nomorUrut > daftarJadwal.length) {
-                    await sock.sendMessage(pengirim, { 
-                        text: `❌ Nomor jadwal tidak ditemukan. Anda hanya memiliki ${daftarJadwal.length} jadwal aktif.\n\nKetik *j* untuk melihat daftar nomornya.` 
+                    await kirimBalasan({ 
+                        text: `❌ Nomor jadwal tidak ditemukan. Hanya ada ${daftarJadwal.length} jadwal aktif.\n\nKetik *j* untuk melihat daftar nomornya.` 
                     });
                     return;
                 }
 
                 const targetJadwal = daftarJadwal[nomorUrut - 1]; 
                 
+                if (isGroup && targetJadwal.pembuat_jid !== peserta) {
+                    await kirimBalasan({ text: `❌ Anda tidak diizinkan untuk menghapus jadwal ini karena dibuat oleh pengguna lain.` });
+                    return;
+                }
+                
                 await db.run(`DELETE FROM reminders WHERE id = ?`, [targetJadwal.id]);
-                await sock.sendMessage(pengirim, { text: `✅ Jadwal *"${targetJadwal.pesan}"* berhasil dihapus.` });
+                await kirimBalasan({ text: `✅ Jadwal *"${targetJadwal.pesan}"* berhasil dihapus.` });
             }
             else if (lowerText === 'backup' && ADMIN_JID && pengirim === ADMIN_JID) {
-                await sock.sendMessage(pengirim, { text: `⏳ Memulai backup manual ke Google Drive...` });
+                await kirimBalasan({ text: `⏳ Memulai backup manual ke Google Drive...` });
                 const sukses = await jalankanBackupDatabase(db);
                 if (sukses) {
-                    await sock.sendMessage(pengirim, { text: `✅ Backup berhasil diunggah ke Google Drive.` });
+                    await kirimBalasan({ text: `✅ Backup berhasil diunggah ke Google Drive.` });
                 } else {
-                    await sock.sendMessage(pengirim, { text: `❌ Gagal mengunggah backup. Cek log server untuk detailnya.` });
+                    await kirimBalasan({ text: `❌ Gagal mengunggah backup. Cek log server untuk detailnya.` });
                 }
             }
             // Perintah khusus admin: baca masukan yang selama ini masuk.
@@ -726,7 +763,7 @@ async function connectToWhatsApp() {
                 );
 
                 if (daftarSaran.length === 0) {
-                    await sock.sendMessage(pengirim, { text: `📭 Belum ada saran atau laporan yang masuk.` });
+                    await kirimBalasan({ text: `📭 Belum ada saran atau laporan yang masuk.` });
                 } else {
                     const total = await db.get(`SELECT COUNT(id) as count FROM feedbacks`);
                     let teks = `📬 *${daftarSaran.length} Masukan Terbaru* (total ${total.count})\n\n`;
@@ -739,29 +776,29 @@ async function connectToWhatsApp() {
                         teks += `${i + 1}. *${s.nama}* — ${waktu}\n${s.pesan}\n\n`;
                     });
 
-                    await sock.sendMessage(pengirim, { text: teks.trim() });
+                    await kirimBalasan({ text: teks.trim() });
                 }
             }
             else if (lowerText === 'saran' || lowerText === 'lapor' || lowerText === 'feedback') {
                 userSessions.set(pengirim, { step: 'WAITING_FEEDBACK', terakhirAktif: waktuSekarang });
-                await sock.sendMessage(pengirim, { 
+                await kirimBalasan({ 
                     text: `Halo Kak ${namaPengirim}, silakan ketik saran, masukan, keluhan, atau laporan *bug* mengenai bot ini di bawah.\n\n_(Ketik *b* jika ingin membatalkan)_` 
                 });
             }
             else if (lowerText === 'panduan' || lowerText === 'p' || lowerText === '!help' || lowerText === 'halo' || lowerText === 'ping' || lowerText === '?') {
-                await sock.sendMessage(pengirim, { 
+                await kirimBalasan({ 
                     text: `💡 *Pusat Bantuan Bot Reminder*\n\nUntuk membuat jadwal, langsung saja ketik:\n_"Besok jam 7 pagi ingatkan saya bayar SPP"_\n\n*⌨️ Daftar Perintah Lainnya:*\n• *j* (atau *jadwal*) : Lihat daftar pengingat\n• *h 1* (atau *hapus 1*) : Hapus jadwal No. 1\n• *hs* (atau *hapus semua*) : Hapus semua\n• *ha* (atau *hapus akun*) : Hapus akun dan data Anda\n• *saran* (atau *lapor*) : Kirim masukan/bug\n• *b* (atau *batal*) : Membatalkan aksi\n• *p* (atau *panduan*) : Buka menu bantuan ini\n\n*⏱️ Cara Mengetik Waktu:*\n• Durasi: *5 menit* (atau 5 mnt), *2 jam*, *3 hari*\n• Hari ini: *14:30*, *jam 7 pagi*, *hari ini 07.00*, *nanti malam jam 8*\n• Besok/Lusa: *besok 08:00*, *besok pagi*, *lusa 3 sore*\n• Nama hari: *senin 3 sore*, *jumat jam 8 malam*\n• Spesifik (Tgl/Bln/Thn): *21/08/2026 15:00*` 
                 });
             }
             else {
                 // --- 🤖 AI NATURAL LANGUAGE INTERCEPTOR ---
-                // Filter ringan: Hanya pesan dengan panjang >10 char yang mengandung kata kunci
+                // Filter ringan: Di japri harus ada kata kunci, di grup langsung terobos karena bot sudah sengaja ditag
                 const kataKunci = ['ingat', 'jadwal', 'besok', 'lusa', 'nanti', 'jam', 'pagi', 'siang', 'sore', 'malam', 'hari', 'tiap', 'setiap'];
-                const isBisaJadiJadwal = kataKunci.some(kata => lowerText.includes(kata));
+                const isBisaJadiJadwal = isGroup || kataKunci.some(kata => lowerText.includes(kata));
                 
-                if (userText.length > 10 && userText.length <= 250 && isBisaJadiJadwal) {
+                if (userText.length > 5 && userText.length <= 250 && isBisaJadiJadwal) {
                     // Beritahu pengguna kalau pesan sedang dianalisa AI
-                    await sock.sendMessage(pengirim, { text: `🧠 _AI sedang mencerna jadwal Anda..._` });
+                    await kirimBalasan({ text: `🧠 _AI sedang mencerna jadwal Anda..._` });
                     
                     try {
                         const hasilAI = await parseJadwalWithAI(userText, new Date());
@@ -771,7 +808,7 @@ async function connectToWhatsApp() {
                             
                             // Cek apakah waktu sudah lewat
                             if (targetWaktu <= waktuSekarang) {
-                                await sock.sendMessage(pengirim, { text: `❌ AI mendeteksi waktu yang Anda sebutkan sudah berlalu. Silakan ketik jadwal di masa depan.` });
+                                await kirimBalasan({ text: `❌ AI mendeteksi waktu yang Anda sebutkan sudah berlalu. Silakan ketik jadwal di masa depan.` });
                                 return;
                             }
 
@@ -784,15 +821,15 @@ async function connectToWhatsApp() {
                             if (hasilAI.siklus === 'tahunan') { dbSiklus = 'tahunan'; labelSiklus = '🔄 Setiap Tahun'; }
 
                             await db.run(
-                                `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan) VALUES (?, ?, ?, ?, ?, ?)`,
-                                [pengirim, hasilAI.pesan, targetWaktu, 'pending', waktuSekarang, dbSiklus]
+                                `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan, pembuat_jid) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                [pengirim, hasilAI.pesan, targetWaktu, 'pending', waktuSekarang, dbSiklus, peserta]
                             );
 
                             const tglFormat = new Date(targetWaktu).toLocaleString('id-ID', {
                                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
                             });
 
-                            await sock.sendMessage(pengirim, { 
+                            await kirimBalasan({ 
                                 text: `✨ *Jadwal Otomatis Tersimpan (AI)!*\n\n📝 "${hasilAI.pesan}"\n🗓️ Mulai: ${tglFormat}\n🔁 Siklus: ${labelSiklus}\n\n_Ketik *j* untuk melihat daftar jadwal Anda._` 
                             });
                             
@@ -801,7 +838,7 @@ async function connectToWhatsApp() {
                     } catch (error) {
                         console.error('Error AI Interceptor:', error);
                         userSessions.set(pengirim, { step: 'WAITING_TIME', terakhirAktif: waktuSekarang });
-                        await sock.sendMessage(pengirim, { 
+                        await kirimBalasan({ 
                             text: `🧠 _Waduh, sistem cerdas saya sedang sibuk. Mari kita buat secara bertahap ya Kak._\n\nKapan Anda ingin diingatkan?\n_(Balas dengan waktu kasual seperti *10 menit*, *besok 8 malam*, atau *15:30*. Ketik *b* untuk batal)_` 
                         });
                     }
@@ -830,7 +867,7 @@ cron.schedule('* * * * *', async () => {
         // Dibatasi per putaran: kalau bot sempat mati beberapa jam, tunggakan
         // dicicil beberapa putaran alih-alih diledakkan sekaligus ke WhatsApp.
         const pendingReminders = await db.all(`
-            SELECT r.id, r.nomor_wa, r.pesan, r.tipe_pengulangan, r.waktu_eksekusi, r.snooze_count, u.nama
+            SELECT r.id, r.nomor_wa, r.pesan, r.tipe_pengulangan, r.waktu_eksekusi, r.snooze_count, r.pembuat_jid, u.nama
             FROM reminders r
             LEFT JOIN users u ON r.nomor_wa = u.nomor_wa
             WHERE r.status = 'pending' AND r.waktu_eksekusi <= ?
@@ -858,10 +895,19 @@ cron.schedule('* * * * *', async () => {
                     footerText = `\n_(Bot akan mengingatkan lagi dalam 10 menit. Balas *OK* untuk menghentikan)_`;
                 }
 
+                const isGrup = reminder.nomor_wa.endsWith('@g.us');
+                const targetTag = reminder.pembuat_jid || reminder.nomor_wa;
+                
+                const payload = {
+                    text: `*${reminder.pesan}*\n\n⏰ Halo ${isGrup ? '@' + targetTag.split('@')[0] : namaUser}, waktunya pengingat Anda!${footerText}`
+                };
+
+                if (isGrup) {
+                    payload.mentions = [targetTag];
+                }
+
                 // PESAN UTAMA DITARUH DI PALING ATAS AGAR MUNCUL DI NOTIFIKASI
-                await sock.sendMessage(reminder.nomor_wa, {
-                    text: `*${reminder.pesan}*\n\n⏰ Halo ${namaUser}, waktunya pengingat Anda!${footerText}`
-                });
+                await sock.sendMessage(reminder.nomor_wa, payload);
 
                 // Jadwal ulang ke kemunculan berikutnya yang masih di masa depan,
                 // atau tandai selesai bila tipenya 'sekali' atau 'auto_snooze'.
