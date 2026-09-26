@@ -891,13 +891,13 @@ cron.schedule('* * * * *', async () => {
                 const currentSnoozeCount = reminder.snooze_count || 0;
                 const maxSnooze = 3;
                 
-                let footerText = '';
-                if (currentSnoozeCount < maxSnooze) {
-                    footerText = `\n_(Bot akan mengingatkan lagi dalam 10 menit. Balas *OK* untuk menghentikan)_`;
-                }
-
                 const isGrup = reminder.nomor_wa.endsWith('@g.us');
                 const targetTag = reminder.pembuat_jid || reminder.nomor_wa;
+                
+                let footerText = '';
+                if (!isGrup && currentSnoozeCount < maxSnooze) {
+                    footerText = `\n_(Bot akan mengingatkan lagi dalam 10 menit. Balas *OK* untuk menghentikan)_`;
+                }
                 
                 const payload = {
                     text: `*${reminder.pesan}*\n\n⏰ Halo ${isGrup ? '@' + targetTag.split('@')[0] : namaUser}, waktunya pengingat Anda!${footerText}`
@@ -925,8 +925,8 @@ cron.schedule('* * * * *', async () => {
                     await db.run(`UPDATE reminders SET status = 'sent' WHERE id = ?`, [reminder.id]);
                 }
                 
-                // BUAT JADWAL AUTO-SNOOZE JIKA BELUM MENCAPAI BATAS
-                if (currentSnoozeCount < maxSnooze) {
+                // BUAT JADWAL AUTO-SNOOZE JIKA BUKAN GRUP DAN BELUM MENCAPAI BATAS
+                if (!isGrup && currentSnoozeCount < maxSnooze) {
                     const nextSnoozeTime = waktuSekarang + (10 * 60 * 1000);
                     await db.run(
                         `INSERT INTO reminders (nomor_wa, pesan, waktu_eksekusi, status, created_at, tipe_pengulangan, snooze_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
