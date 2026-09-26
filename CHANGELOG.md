@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Urutan Alur Manual (Fallback)**: Mengubah urutan pertanyaan (*State Machine*) saat membuat jadwal secara manual atau saat AI gagal. Bot kini akan menanyakan target waktu terlebih dahulu ("Kapan Anda ingin diingatkan?"), baru kemudian menanyakan isi pesan pengingatnya. Hal ini membuat percakapan terasa lebih natural dan tegas.
 
 ### Fixed
+- **Deteksi Mention Grup (LID)**: Memperbaiki *bug* di mana bot mengabaikan tag di grup jika nomor pengirim disembunyikan oleh WhatsApp. Kode kini mengecek `sock.user.lid` (Local ID) selain JID biasa.
+- **Spam Auto-Snooze di Grup**: Menonaktifkan fitur *auto-snooze* (pengulangan pengingat 3x setiap 10 menit) dan pesan *footer* ("Balas OK untuk menghentikan") khusus untuk pengingat yang dikirim ke grup, agar tidak menyebabkan *spamming* obrolan di grup.
 - **Bug Pendaftaran**: Memperbaiki masalah di mana balasan huruf tunggal `s` (sebagai konfirmasi) tidak dikenali oleh sistem yang berakibat pengguna terjebak pada pesan sapaan bot.
 - **Fleksibilitas Perintah Hapus**: Memperbaiki pembacaan perintah hapus agar juga mendukung format tanpa spasi seperti `h1` atau `hapus1` (sebelumnya hanya membaca `h 1` atau `hapus 1`).
 - **UX Penyambutan & Panduan**: Menghapus instruksi pembuatan jadwal manual (`ketik i`) dari teks sambutan pendaftaran dan menu panduan (`p`). Menggantinya dengan panduan berfokus pada natural language/AI agar terlihat lebih modern.
