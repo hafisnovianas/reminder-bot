@@ -794,7 +794,7 @@ async function connectToWhatsApp() {
             else {
                 // --- 🤖 AI NATURAL LANGUAGE INTERCEPTOR ---
                 // Filter ringan: Di japri harus ada kata kunci, di grup langsung terobos karena bot sudah sengaja ditag
-                const kataKunci = ['ingat', 'jadwal', 'besok', 'lusa', 'nanti', 'jam', 'pagi', 'siang', 'sore', 'malam', 'hari', 'tiap', 'setiap'];
+                const kataKunci = ['ingat', 'jadwal', 'besok', 'lusa', 'nanti', 'jam', 'menit', 'detik', 'pagi', 'siang', 'sore', 'malam', 'hari', 'minggu', 'bulan', 'tahun', 'tiap', 'setiap'];
                 const isBisaJadiJadwal = isGroup || kataKunci.some(kata => lowerText.includes(kata));
                 
                 if (userText.length > 5 && userText.length <= 250 && isBisaJadiJadwal) {
