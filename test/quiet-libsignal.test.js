@@ -27,8 +27,7 @@ test('baris yang melampirkan objek sesi kehilangan lampirannya', () => {
         'Session already closed'
     ]) {
         const hasil = saringArgumen([prefix, sesiPalsu()]);
-        assert.strictEqual(hasil.length, 1, `"${prefix}" masih membawa lampiran`);
-        assert.strictEqual(hasil[0], `${prefix} [objek sesi disembunyikan]`);
+        assert.strictEqual(hasil, null, `"${prefix}" tidak dibungkam sepenuhnya`);
     }
 });
 
@@ -81,9 +80,9 @@ test('setelah diredam, private key tidak pernah muncul di keluaran', () => {
     assert.ok(!keluaran.includes('privKey'), 'nama field privKey masih tercetak');
     assert.ok(!keluaran.includes('registrationId'), 'isi objek sesi masih tercetak');
 
-    // Pesannya sendiri tetap ada, supaya masalah sesi masih bisa dilacak.
-    assert.ok(keluaran.includes('Closing session:'), 'pesannya ikut hilang');
-    assert.ok(keluaran.includes('[objek sesi disembunyikan]'));
+    // Pesannya sudah dihilangkan sepenuhnya.
+    assert.ok(!keluaran.includes('Closing session:'), 'pesannya masih muncul padahal seharusnya diredam penuh');
+    assert.ok(!keluaran.includes('[objek sesi disembunyikan]'));
 });
 
 test('redamLogSesi aman dipanggil berkali-kali', () => {
