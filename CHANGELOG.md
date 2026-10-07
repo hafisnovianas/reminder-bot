@@ -24,3 +24,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fleksibilitas Perintah Hapus**: Memperbaiki pembacaan perintah hapus agar juga mendukung format tanpa spasi seperti `h1` atau `hapus1` (sebelumnya hanya membaca `h 1` atau `hapus 1`).
 - **UX Penyambutan & Panduan**: Menghapus instruksi pembuatan jadwal manual (`ketik i`) dari teks sambutan pendaftaran dan menu panduan (`p`). Menggantinya dengan panduan berfokus pada natural language/AI agar terlihat lebih modern.
 - **GitHub Actions (`deploy.yml`)**: Menghapus langkah `npm test` untuk menghemat kuota *rate limit* API Groq, dan menyuntikkan variabel `GROQ_API_KEY` pada tahap *deploy* PM2.
+- **AI Parser Prompt (Format 24 Jam)**: Menambahkan penegasan aturan format 24 jam pada *system prompt* AI agar waktu sore/malam tidak lagi keliru ditulis sebagai format 12 jam (pagi hari) yang memicu deteksi waktu lampau.
