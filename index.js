@@ -32,6 +32,7 @@ const {
 
 let sock; // Variabel global untuk socket WA
 let db;   // Variabel global untuk koneksi database SQLite
+let isWaReady = false; // Penanda apakah koneksi WhatsApp aktif dan siap mengirim pesan
 
 // Penjaga agar tidak ada dua proses penyambungan berjalan bersamaan.
 // Event 'close' bisa muncul berkali-kali untuk satu kegagalan yang sama;
@@ -162,6 +163,7 @@ async function initDatabase() {
 
 /** Jadwalkan sambung ulang dengan jeda yang makin panjang (maks 60 detik). */
 function jadwalkanSambungUlang() {
+    isWaReady = false;
     const jeda = Math.min(60000, 2000 * Math.pow(2, percobaanUlang));
     percobaanUlang += 1;
     console.log(`🔄 Menghubungkan ulang dalam ${Math.round(jeda / 1000)} detik (percobaan ke-${percobaanUlang})...`);
@@ -175,6 +177,7 @@ async function connectToWhatsApp() {
     // Putuskan socket lama sebelum membuat yang baru, supaya listener-nya tidak
     // ikut hidup dan memproses pesan yang sama untuk kedua kalinya.
     if (sock) {
+        isWaReady = false;
         const socketLama = sock;
         sock = null;
         try {
@@ -203,6 +206,7 @@ async function connectToWhatsApp() {
         // versi). Tanpa ini flag sedangMenghubungkan tersangkut selamanya dan
         // bot tidak pernah mencoba menyambung lagi.
         console.error('❌ Gagal menyiapkan koneksi:', e?.message || e);
+        isWaReady = false;
         sedangMenghubungkan = false;
         jadwalkanSambungUlang();
         return;
@@ -226,22 +230,30 @@ async function connectToWhatsApp() {
         }
 
         if (connection === 'close') {
+            isWaReady = false;
             const reason = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = reason !== DisconnectReason.loggedOut;
+            const isLoggedOut = reason === DisconnectReason.loggedOut;
+            const isRestartRequired = reason === DisconnectReason.restartRequired;
 
-            console.log(`❌ Koneksi terputus. Kode Status: ${reason}`);
+            console.log(`❌ Koneksi terputus. Kode Status: ${reason || 'Tidak Diketahui'}`);
 
             // Lepas penjaga DULU, baru jadwalkan. Kalau tidak, percobaan
             // berikutnya akan langsung ditolak oleh guard di awal fungsi.
             sedangMenghubungkan = false;
 
-            if (shouldReconnect) {
-                jadwalkanSambungUlang();
+            if (isLoggedOut) {
+                console.error('🛑 Sesi Logout terdeteksi (Kode 401). Sesi WhatsApp sudah tidak valid.');
+                console.error('🛑 Menghentikan proses agar dapat di-restart bersih dan scan QR ulang...');
+                process.exit(1);
+            } else if (isRestartRequired) {
+                console.log('⚡ Server WhatsApp meminta restart koneksi segera (Kode 515). Menghubungkan ulang...');
+                connectToWhatsApp();
             } else {
-                console.log('🛑 Sesi Logout. Folder auth_wa sudah tidak valid, silakan hapus folder tersebut dan restart server.');
+                jadwalkanSambungUlang();
             }
         } else if (connection === 'open') {
             console.log('✅ WhatsApp Berhasil Terhubung! Bot Reminder Siap!');
+            isWaReady = true;
             sedangMenghubungkan = false;
             percobaanUlang = 0; // koneksi sehat, reset jeda backoff
             mulaiAutoBackup(sock, db);
@@ -857,7 +869,9 @@ let cronSedangBerjalan = false;
 
 // Berjalan setiap 1 menit (* * * * *)
 cron.schedule('* * * * *', async () => {
-    if (!sock || !db) return; // Lewati jika WA/DB belum siap
+    // Lewati jika koneksi WhatsApp belum siap/terputus atau database belum siap.
+    // Menghindari error 428 (Connection Closed) saat socket sedang mati atau reconnect.
+    if (!isWaReady || !sock || !db) return;
     if (cronSedangBerjalan) return;
 
     cronSedangBerjalan = true;
@@ -937,7 +951,15 @@ cron.schedule('* * * * *', async () => {
 
                 console.log(`✅ Sukses mengirim reminder ke ${reminder.nomor_wa.split('@')[0]}`);
             } catch (sendError) {
-                console.error(`❌ Gagal mengirim ke ${reminder.nomor_wa}:`, sendError);
+                console.error(`❌ Gagal mengirim ke ${reminder.nomor_wa}:`, sendError?.message || sendError);
+                // Jika socket terputus saat proses pengiriman, tandai WA tidak siap
+                // dan hentikan sisa antrean putaran ini agar tidak banjir error Connection Closed
+                const statusCode = sendError?.output?.statusCode;
+                if (statusCode === 428 || sendError?.message?.includes('Connection Closed')) {
+                    console.warn('⚠️ Koneksi terputus saat mengirim pesan. Menandai WhatsApp offline dan menunda sisa antrean putaran ini.');
+                    isWaReady = false;
+                    break;
+                }
             }
         }
     } catch (error) {

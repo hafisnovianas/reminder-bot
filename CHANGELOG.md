@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Urutan Alur Manual (Fallback)**: Mengubah urutan pertanyaan (*State Machine*) saat membuat jadwal secara manual atau saat AI gagal. Bot kini akan menanyakan target waktu terlebih dahulu ("Kapan Anda ingin diingatkan?"), baru kemudian menanyakan isi pesan pengingatnya. Hal ini membuat percakapan terasa lebih natural dan tegas.
 
 ### Fixed
+- **Penanganan Status Koneksi & Error 428 (Connection Closed)**: Menambahkan state `isWaReady` agar cron pengingat tidak mencoba mengirim pesan saat socket WhatsApp sedang offline/reconnecting. Menambahkan pemutusan loop batch jika terjadi putus koneksi di tengah pengiriman.
+- **Pencegahan Zombie Process (Anti-Zombie)**: Menangani `DisconnectReason.loggedOut` (401) dengan keluar secara bersih (`process.exit(1)`) agar proses tidak menggantung tanpa koneksi, serta mempercepat reconnect instan pada `DisconnectReason.restartRequired` (515).
 - **Deteksi Mention Grup (LID)**: Memperbaiki *bug* di mana bot mengabaikan tag di grup jika nomor pengirim disembunyikan oleh WhatsApp. Kode kini mengecek `sock.user.lid` (Local ID) selain JID biasa.
 - **Bug Pendaftaran**: Memperbaiki masalah di mana balasan huruf tunggal `s` (sebagai konfirmasi) tidak dikenali oleh sistem yang berakibat pengguna terjebak pada pesan sapaan bot.
 - **Fleksibilitas Perintah Hapus**: Memperbaiki pembacaan perintah hapus agar juga mendukung format tanpa spasi seperti `h1` atau `hapus1` (sebelumnya hanya membaca `h 1` atau `hapus 1`).
