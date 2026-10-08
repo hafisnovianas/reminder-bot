@@ -83,7 +83,7 @@ function formatWaktuRingkas(date) {
 
 // Setelah waktu final ditentukan, lanjut ke pertanyaan pengulangan.
 // Dipakai baik dari alur normal maupun setelah user memilih jam yang ambigu.
-async function lanjutKeTahapPesan(pengirim, session, targetDate) {
+async function lanjutKeTahapPesan(pengirim, session, targetDate, kirimBalasan) {
     session.waktuEksekusi = targetDate.getTime();
     session.konfirmasiWaktu = formatWaktuLengkap(targetDate);
     session.step = 'WAITING_MESSAGE';
@@ -480,7 +480,7 @@ async function connectToWhatsApp() {
                     }
 
                     // Pindah ke tahap tanya Pesan
-                    await lanjutKeTahapPesan(pengirim, session, targetDate);
+                    await lanjutKeTahapPesan(pengirim, session, targetDate, kirimBalasan);
                     return;
                 }
 
@@ -507,7 +507,7 @@ async function connectToWhatsApp() {
                         return;
                     }
 
-                    await lanjutKeTahapPesan(pengirim, session, terpilih);
+                    await lanjutKeTahapPesan(pengirim, session, terpilih, kirimBalasan);
                     return;
                 }
 
